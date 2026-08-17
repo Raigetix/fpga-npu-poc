@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NPU FPGA - Palabras clave</title>
+<style>
+ *{box-sizing:border-box}
+ body{margin:0;padding:18px;background:#0e1116;color:#e6edf3;
+      font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;text-align:center}
+ h1{font-size:1.1rem;margin:0 0 4px}
+ p.sub{margin:0 0 16px;color:#8b949e;font-size:.85rem}
+ .words{color:#8b949e;font-size:.8rem;margin-bottom:16px}
+ .words b{color:#e6edf3;font-weight:600}
+ button{background:#1f6feb;color:#fff;border:0;border-radius:10px;
+        padding:14px 28px;font-size:1rem;cursor:pointer}
+ button:disabled{background:#21262d;color:#8b949e}
+ #status{margin:12px 0;color:#8b949e;font-size:.85rem;min-height:1.2rem}
+ .vs{display:flex;gap:10px;max-width:360px;margin:12px auto 0}
+ .card{flex:1;background:#161b22;border:1px solid #30363d;border-radius:10px;padding:10px 6px}
+ .card.win{border-color:#3fb950}
+ .card .who{font-size:.72rem;color:#8b949e}
+ .card .word{font-size:1.8rem;font-weight:700;line-height:1.3}
+ .card .ms{font-size:.8rem;color:#8b949e}
+ .card.win .ms{color:#3fb950;font-weight:600}
+ #speed{margin-top:10px;font-size:.85rem}
+ #warn{margin-top:6px;font-size:.8rem;color:#d29922;min-height:1rem}
+#debug{margin-top:6px;font-size:.7rem;color:#6e7681;word-break:break-word}
+ .bars{max-width:360px;margin:14px auto 0;text-align:left}
+ .row{display:flex;align-items:center;gap:8px;margin:3px 0;font-size:.8rem}
+ .row .label{width:56px;color:#8b949e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+ .row .pct{width:36px;text-align:right;color:#8b949e;font-variant-numeric:tabular-nums}
+ .bar{flex:1;height:9px;background:#21262d;border-radius:5px;overflow:hidden}
+ .fill{height:100%;background:#1f6feb;width:0}
+ .row.top .fill{background:#3fb950}
+ .row.top .label,.row.top .pct{color:#3fb950;font-weight:700}
+</style></head><body>
+<h1>Decí una palabra</h1>
+<p class="sub">La reconoce la NPU en la FPGA</p>
+<div class="words">Entiende: <b>down go left no right stop up yes</b></div>
+<button id="rec" onclick="record()">Grabar 1 segundo</button>
+<div id="status"></div>
+<div class="vs">
+  <div class="card" id="cFpga"><div class="who">FPGA</div><div class="word" id="pFpga">–</div><div class="ms" id="mFpga">—</div></div>
+  <div class="card" id="cEsp"><div class="who">ESP32 (software)</div><div class="word" id="pEsp">–</div><div class="ms" id="mEsp">—</div></div>
+</div>
+<div id="speed"></div>
+<div id="warn"></div>
+<div id="debug"></div>
+<div class="bars" id="bars"></div>
+<script>
+const $=id=>document.getElementById(id);
+const SR=16000, NS=16000;
+async function record(){
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
+    $('status').textContent='El navegador bloquea el micrófono en páginas http:// — hay que habilitar el origen (ver el README)';
+    return;
+  }
+  const btn=$('rec'); btn.disabled=true;
+  try{
+    $('status').textContent='pidiendo permiso...';
+    // en Android, echoCancellation/noiseSuppression/autoGainControl en false a
+    // veces se ignoran -- las claves viejas "goog..." de Chrome a veces si se
+    // respetan y son las que realmente frenan el procesamiento de voz del SO
+    // que aplana el detalle espectral (por eso solo fallaba en el celular)
+    // pedimos 16kHz directo: si el navegador lo concede, evitamos por completo
+    // nuestro remuestreo casero por interpolacion lineal (que no filtra antialias
+    // y puede meter artefactos distintos segun la frecuencia nativa de cada mic)
+    const stream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,
+      sampleRate:{ideal:16000},
+      echoCancellation:false,noiseSuppression:false,autoGainControl:false,
+      googEchoCancellation:false,googAutoGainControl:false,googNoiseSuppression:false,
+      googHighpassFilter:false,googTypingNoiseDetection:false,googAudioMirroring:false}});
+    const ac=new (window.AudioContext||window.webkitAudioContext)({sampleRate:16000});
+    const acSampleRate=ac.sampleRate;   // para el panel de diagnostico (ver si el navegador concedio 16kHz)
+    const src=ac.createMediaStreamSource(stream);
+    const proc=ac.createScriptProcessor(4096,1,1);
+    let chunks=[],total=0,recording=false;
+    const CAPTURE_S=1.6;   // graba mas de 1s: despues nos quedamos con el mejor segundo
+    const need=Math.ceil(ac.sampleRate*CAPTURE_S);
+    proc.onaudioprocess=e=>{
+      if(!recording||total>=need)return;
+      const d=e.inputBuffer.getChannelData(0);
+      chunks.push(new Float32Array(d)); total+=d.length;
+    };
+    src.connect(proc); proc.connect(ac.destination);
+    // cuenta regresiva (asi sabes cuando empieza a grabar de verdad)
+    for(const c of ['3','2','1','¡YA!']){
+      $('status').textContent=c;
+      await new Promise(r=>setTimeout(r,500));
+    }
+    $('status').textContent='🎤 grabando... ¡hablá ahora!';
+    recording=true;
+    await new Promise(r=>{
+      const check=()=>{ if(total>=need) r(); else setTimeout(check,20); };
+      check();
+    });
+    proc.disconnect(); src.disconnect();
+    stream.getTracks().forEach(t=>t.stop());
+    // juntar y remuestrear a 16 kHz (interpolación lineal)
+    const all=new Float32Array(total); let o=0;
+    for(const c of chunks){all.set(c,o);o+=c.length;}
+    const ratio=ac.sampleRate/SR;
+    const nOut=Math.floor(total/ratio);
+    const resampled=new Float32Array(nOut);
+    for(let i=0;i<nOut;i++){
+      const p=i*ratio, i0=Math.floor(p), fr=p-i0;
+      const a=all[i0]||0, b=all[i0+1]||0;
+      resampled[i]=a+(b-a)*fr;
+    }
+    // quedarse con el segundo de mas energia (igual que en el entrenamiento) --
+    // asi no importa si hablaste un poco antes o despues de la cuenta regresiva
+    let start=0;
+    if(nOut>NS){
+      const cum=new Float64Array(nOut+1);
+      for(let i=0;i<nOut;i++) cum[i+1]=cum[i]+resampled[i]*resampled[i];
+      let best=-1;
+      for(let s=0;s<=nOut-NS;s++){
+        const en=cum[s+NS]-cum[s];
+        if(en>best){best=en; start=s;}
+      }
+    }
+    // normalizar volumen: los microfonos de celular graban mucho mas bajo
+    // que el que se uso para entrenar, y el MFCC (escala logaritmica) es
+    // sensible a eso -- llevamos el pico a un nivel parecido al de entrenamiento
+    let peak=0;
+    for(let i=0;i<NS;i++){ const v=Math.abs(resampled[start+i]||0); if(v>peak) peak=v; }
+    const gain=peak>1e-6 ? Math.min(0.65/peak,20) : 1;
+    const pcm=new Int16Array(NS);
+    for(let i=0;i<NS;i++){
+      let v=(resampled[start+i]||0)*gain*32767;
+      pcm[i]=Math.max(-32768,Math.min(32767,v|0));
+    }
+    ac.close();
+    $('status').textContent='calculando...';
+    // base64 de PCM int16 (mucho más liviano que mandar números en texto)
+    const bytes=new Uint8Array(pcm.buffer);
+    let bin=''; for(let i=0;i<bytes.length;i++) bin+=String.fromCharCode(bytes[i]);
+    const r=await fetch('/predict',{method:'POST',body:btoa(bin)});
+    const j=await r.json();
+    $('pFpga').textContent=j.word;   $('mFpga').textContent=j.ms.toFixed(2)+' ms';
+    $('pEsp').textContent=j.swWord;  $('mEsp').textContent=j.swMs.toFixed(2)+' ms';
+    const fw=j.ms<=j.swMs;
+    $('cFpga').className='card'+(fw?' win':''); $('cEsp').className='card'+(fw?'':' win');
+    const x=j.swMs/j.ms;
+    $('speed').textContent=fw?'La FPGA es '+x.toFixed(2)+'x más rápida'
+                             :'El ESP32 es '+(1/x).toFixed(2)+'x más rápido';
+    $('status').textContent='MFCC en el ESP32: '+j.mfccMs.toFixed(1)+' ms';
+    $('warn').textContent=(j.word!==j.swWord)?'⚠ FPGA y ESP32 no coinciden':'';
+    $('debug').textContent='mic a '+acSampleRate+' Hz  |  features: min='+j.featMin+' max='+j.featMax+' media='+j.featMean+
+      ' (zp='+j.zpIn+')  saturados: '+j.satLo+' abajo / '+j.satHi+' arriba  |  '+
+      'audio crudo: min='+j.rawMin+' max='+j.rawMax+' |vol|='+j.rawAvgAbs;
+    // softmax sobre los puntajes crudos (logits int8) -> probabilidad real,
+    // en vez del mapeo lineal anterior que dejaba todas las barras parecidas
+    const mx=Math.max(...j.scores);
+    const exps=j.scores.map(s=>Math.exp(s-mx));
+    const sumExp=exps.reduce((a,b)=>a+b,0);
+    const probs=exps.map(e=>e/sumExp);
+    let h='';
+    for(let i=0;i<j.scores.length;i++){
+      const w=Math.round(probs[i]*100);
+      h+='<div class="row'+(j.words[i]===j.word?' top':'')+'"><span class="label">'+j.words[i]+'</span>'+
+         '<div class="bar"><div class="fill" style="width:'+w+'%"></div></div>'+
+         '<span class="pct">'+w+'%</span></div>';}
+    $('bars').innerHTML=h;
+  }catch(e){ $('status').textContent='error: '+e.message; }
+  btn.disabled=false;
+}
+</script></body></html>

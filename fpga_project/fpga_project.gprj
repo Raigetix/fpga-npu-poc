@@ -1,0 +1,50 @@
+<?xml version="1" encoding="UTF-8"?>
+<!DOCTYPE gowin-fpga-project>
+<Project>
+    <Template>FPGA</Template>
+    <Version>5</Version>
+    <Device name="GW2AR-18C" pn="GW2AR-LV18QN88C8/I7">gw2ar18c-000</Device>
+    <FileList>
+        <File path="src/00_comun/spi_slave.v" type="file.verilog" enable="1"/>
+        <File path="src/01_mac_unico/debug_cmd_mask.v" type="file.verilog" enable="1"/>
+        <File path="src/01_mac_unico/debug_exec_counts.v" type="file.verilog" enable="1"/>
+        <File path="src/01_mac_unico/debug_frame_counter.v" type="file.verilog" enable="1"/>
+        <File path="src/01_mac_unico/debug_miso_const.v" type="file.verilog" enable="1"/>
+        <File path="src/01_mac_unico/debug_product.v" type="file.verilog" enable="1"/>
+        <File path="src/01_mac_unico/debug_sum.v" type="file.verilog" enable="1"/>
+        <File path="src/01_mac_unico/debug_wide_accum.v" type="file.verilog" enable="1"/>
+        <File path="src/01_mac_unico/top.v" type="file.verilog" enable="1"/>
+        <File path="src/02_mlp_un_carril/debug_weight_rw.v" type="file.verilog" enable="1"/>
+        <File path="src/02_mlp_un_carril/mlp_engine.v" type="file.verilog" enable="1"/>
+        <File path="src/02_mlp_un_carril/pll_108mhz.v" type="file.verilog" enable="1"/>
+        <File path="src/02_mlp_un_carril/top_mlp.v" type="file.verilog" enable="1"/>
+        <File path="src/02_mlp_un_carril/top_mlp_fast.v" type="file.verilog" enable="1"/>
+        <File path="src/03_mlp_paralelo/debug_weight_par_direct.v" type="file.verilog" enable="1"/>
+        <File path="src/03_mlp_paralelo/mac_lane.v" type="file.verilog" enable="1"/>
+        <File path="src/03_mlp_paralelo/mlp_engine_par.v" type="file.verilog" enable="1"/>
+        <File path="src/03_mlp_paralelo/mlp_engine_par_s1.v" type="file.verilog" enable="1"/>
+        <File path="src/03_mlp_paralelo/mlp_engine_par_s2.v" type="file.verilog" enable="1"/>
+        <File path="src/03_mlp_paralelo/mlp_engine_par_s3.v" type="file.verilog" enable="1"/>
+        <File path="src/03_mlp_paralelo/pll_par.v" type="file.verilog" enable="1"/>
+        <File path="src/03_mlp_paralelo/pll_par_54.v" type="file.verilog" enable="1"/>
+        <File path="src/03_mlp_paralelo/top_mlp_par.v" type="file.verilog" enable="1"/>
+        <File path="src/03_mlp_paralelo/top_mlp_par_s1.v" type="file.verilog" enable="1"/>
+        <File path="src/03_mlp_paralelo/top_mlp_par_s2.v" type="file.verilog" enable="1"/>
+        <File path="src/03_mlp_paralelo/top_mlp_par_s3.v" type="file.verilog" enable="1"/>
+        <File path="src/04_sdram_pesos/sdram.v" type="file.verilog" enable="1"/>
+        <File path="src/04_sdram_pesos/pll_sdram.v" type="file.verilog" enable="1"/>
+        <File path="src/04_sdram_pesos/top_sdram_p1.v" type="file.verilog" enable="1"/>
+        <File path="src/04_sdram_pesos/top_sdram_p2.v" type="file.verilog" enable="1"/>
+        <File path="src/04_sdram_pesos/weight_stream.v" type="file.verilog" enable="1"/>
+        <File path="src/04_sdram_pesos/mac_lane_stream.v" type="file.verilog" enable="1"/>
+        <File path="src/04_sdram_pesos/mlp_engine_par_stream.v" type="file.verilog" enable="1"/>
+        <File path="src/04_sdram_pesos/top_sdram_p3.v" type="file.verilog" enable="1"/>
+        <File path="src/00_comun/top.cst" type="file.cst" enable="0"/>
+        <File path="src/03_mlp_paralelo/debug_weight_par_direct.cst" type="file.cst" enable="0"/>
+        <File path="src/04_sdram_pesos/sdram_pesos.cst" type="file.cst" enable="1"/>
+        <File path="src/00_comun/top.sdc" type="file.sdc" enable="0"/>
+        <File path="src/03_mlp_paralelo/debug_weight_par_direct.sdc" type="file.sdc" enable="0"/>
+        <File path="src/03_mlp_paralelo/situaciones.sdc" type="file.sdc" enable="0"/>
+        <File path="src/04_sdram_pesos/sdram_pesos.sdc" type="file.sdc" enable="1"/>
+    </FileList>
+</Project>

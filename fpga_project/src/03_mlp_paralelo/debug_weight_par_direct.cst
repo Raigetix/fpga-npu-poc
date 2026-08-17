@@ -1,0 +1,38 @@
+IO_LOC "clk" 4;
+IO_PORT "clk" IO_TYPE=LVCMOS33;
+
+IO_LOC "data_out[0]" 73;
+IO_LOC "data_out[1]" 74;
+IO_LOC "data_out[2]" 75;
+IO_LOC "data_out[3]" 85;
+IO_LOC "data_out[4]" 77;
+IO_LOC "data_out[5]" 27;
+IO_LOC "data_out[6]" 28;
+IO_LOC "data_out[7]" 25;
+IO_PORT "data_out[0]" IO_TYPE=LVCMOS33;
+IO_PORT "data_out[1]" IO_TYPE=LVCMOS33;
+IO_PORT "data_out[2]" IO_TYPE=LVCMOS33;
+IO_PORT "data_out[3]" IO_TYPE=LVCMOS33;
+IO_PORT "data_out[4]" IO_TYPE=LVCMOS33;
+IO_PORT "data_out[5]" IO_TYPE=LVCMOS33;
+IO_PORT "data_out[6]" IO_TYPE=LVCMOS33;
+IO_PORT "data_out[7]" IO_TYPE=LVCMOS33;
+
+IO_LOC "heartbeat" 26;
+IO_PORT "heartbeat" IO_TYPE=LVCMOS33;
+
+IO_LOC "addr_sel" 29;
+IO_PORT "addr_sel" IO_TYPE=LVCMOS33;
+
+IO_LOC "led[0]" 15;
+IO_LOC "led[1]" 16;
+IO_LOC "led[2]" 17;
+IO_LOC "led[3]" 18;
+IO_LOC "led[4]" 19;
+IO_LOC "led[5]" 20;
+IO_PORT "led[0]" IO_TYPE=LVCMOS33;
+IO_PORT "led[1]" IO_TYPE=LVCMOS33;
+IO_PORT "led[2]" IO_TYPE=LVCMOS33;
+IO_PORT "led[3]" IO_TYPE=LVCMOS33;
+IO_PORT "led[4]" IO_TYPE=LVCMOS33;
+IO_PORT "led[5]" IO_TYPE=LVCMOS33;

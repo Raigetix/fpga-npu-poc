@@ -1,0 +1,27 @@
+# ---- Python ----
+__pycache__/
+*.pyc
+
+# ---- Cachés de entrenamiento (regenerables, ver tools/) ----
+tools/*.npz
+tools/*.log
+
+# ---- Grabaciones de voz personales -- no van al control de versiones.
+# Quedan en el disco tal cual, solo no se versionan (son datos, no codigo,
+# y son personales). Si las queres respaldar, hacelo aparte (zip, backup
+# externo, etc.), no por git. ----
+tools/my_words/
+
+# ---- Modelos entrenados exportados (regenerables con
+# tools/train_one_word_npu.py -- ver README) ----
+tools/my_words_models/
+esp32/*/*/data/model.bin
+esp32/*/*/data/test.bin
+
+# ---- Artefactos de compilacion de Gowin (regenerables con
+# fpga_project/build.tcl -- ver README) ----
+fpga_project/impl/
+
+# ---- Sistema ----
+.DS_Store
+Thumbs.db
