@@ -40,6 +40,7 @@ module mlp_engine_par_stream #(
     input  wire         ws_issue,
     input  wire         sdram_busy,
     input  wire [31:0]  sdram_dout32,
+    input  wire         sdram_burst_word_valid,
     input  wire [22:0]  weight_base_addr,
 
     // ---- Forma del modelo (configurable por SPI) ----
@@ -221,6 +222,7 @@ module mlp_engine_par_stream #(
         .ws_issue    (ws_issue),
         .sdram_busy  (sdram_busy),
         .sdram_dout32(sdram_dout32),
+        .sdram_burst_word_valid(sdram_burst_word_valid),
         .data_valid  (stream_valid),
         .lane0(ws_lane0), .lane1(ws_lane1), .lane2(ws_lane2), .lane3(ws_lane3),
         .lane4(ws_lane4), .lane5(ws_lane5), .lane6(ws_lane6), .lane7(ws_lane7),

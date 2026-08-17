@@ -135,13 +135,14 @@ module top_sdram_p3 (
     wire        sdram_busy;
     wire [7:0]  sdram_dout;
     wire [31:0] sdram_dout32;
+    wire        sdram_burst_word_valid;
     reg         sdram_resetn = 1'b0;
     always @(posedge clk_sys) sdram_resetn <= pll_lock;
 
     reg [22:0] sdram_target;
     reg [22:0] sdram_op_addr;
     reg [7:0]  sdram_op_data;
-    reg        sdram_rd_pulse, sdram_wr_pulse, sdram_refresh_pulse;
+    reg        sdram_rd_pulse, sdram_wr_pulse, sdram_refresh_pulse, sdram_rdburst_pulse;
 
     reg        pending_wr, pending_rd;
     reg [22:0] pending_addr;
@@ -180,6 +181,7 @@ module top_sdram_p3 (
         sdram_wr_pulse      <= 1'b0;
         sdram_rd_pulse       <= 1'b0;
         sdram_refresh_pulse <= 1'b0;
+        sdram_rdburst_pulse <= 1'b0;
 
         if (want_spi_op) begin
             sdram_op_addr <= pending_addr;
@@ -192,8 +194,10 @@ module top_sdram_p3 (
                 pending_rd     <= 1'b0;
             end
         end else if (want_ws_op) begin
-            sdram_op_addr  <= ws_addr;
-            sdram_rd_pulse <= 1'b1;
+            // streaming de pesos: rafaga de 8 palabras en vez de una lectura
+            // simple -- ver weight_stream.v y sdram.v (comentario RDBURST)
+            sdram_op_addr       <= ws_addr;
+            sdram_rdburst_pulse <= 1'b1;
         end else if (want_refresh) begin
             sdram_refresh_pulse <= 1'b1;
         end
@@ -227,10 +231,12 @@ module top_sdram_p3 (
         .rd        (sdram_rd_pulse),
         .wr        (sdram_wr_pulse),
         .refresh   (sdram_refresh_pulse),
+        .rd_burst  (sdram_rdburst_pulse),
         .addr      (sdram_op_addr),
         .din       (sdram_op_data),
         .dout      (sdram_dout),
         .dout32    (sdram_dout32),
+        .burst_word_valid(sdram_burst_word_valid),
         .data_ready(),
         .busy      (sdram_busy),
 
@@ -328,6 +334,7 @@ module top_sdram_p3 (
         .ws_issue    (want_ws_op),
         .sdram_busy  (sdram_busy),
         .sdram_dout32(sdram_dout32),
+        .sdram_burst_word_valid(sdram_burst_word_valid),
         .weight_base_addr(weight_base_reg),
 
         .load_num_layers_en   (load_numlayers_en),
