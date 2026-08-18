@@ -330,10 +330,13 @@ module top_sdram_p3 (
         .rd        (sdram_rd_pulse),
         .wr        (sdram_wr_pulse),
         .refresh   (sdram_refresh_pulse),
+        .rd_burst2 (1'b0),        // no usado todavia en produccion, ver docs/caracterizacion-frecuencia-sdram.md
         .addr      (sdram_op_addr),
         .din       (sdram_op_data),
         .dout      (sdram_dout),
         .dout32    (sdram_dout32),
+        .dout32_a  (),
+        .dout32_b  (),
         .data_ready(),
         .busy      (sdram_busy),
 

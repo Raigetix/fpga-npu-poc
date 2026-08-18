@@ -52,11 +52,22 @@ module sdram
     input             rd,           // comando: leer
     input             wr,           // comando: escribir
     input             refresh,      // comando: auto-refresco
-    input      [22:0] addr,         // direccion de byte, capturada en el pulso rd/wr
+    // Comando: leer DOS palabras de 32 bits consecutivas (columna, columna+1
+    // de la MISMA fila) en una sola operacion -- activa una vez, emite dos
+    // comandos READ seguidos (auto-precharge solo en el segundo, para que
+    // el chip precargue solo sin necesitar un comando ni espera aparte), en
+    // vez de dos operaciones completas de activar-leer-precargar. OJO: si
+    // 'addr' cae en la ULTIMA columna de la fila (256 columnas por fila),
+    // la segunda palabra NO se puede leer asi (se saldria de la fila) --
+    // quien llama tiene que evitar ese caso (ver weight_stream.v).
+    input             rd_burst2,
+    input      [22:0] addr,         // direccion de byte, capturada en el pulso rd/wr/rd_burst2
     input       [7:0] din,          // dato de entrada, capturado en el pulso wr
     output      [7:0] dout,         // dato de salida, disponible 4 ciclos despues de rd
                                      // queda guardado hasta la proxima lectura
-    output [DATA_WIDTH-1:0] dout32, // salida de 32 bits completa
+    output [DATA_WIDTH-1:0] dout32, // salida de 32 bits completa (rd)
+    output [DATA_WIDTH-1:0] dout32_a, // primera palabra de rd_burst2 (columna base)
+    output [DATA_WIDTH-1:0] dout32_b, // segunda palabra de rd_burst2 (columna base+1)
     output reg        data_ready,   // disponible 6 ciclos despues de que wr se activa
     output reg        busy          // 0: listo para el proximo comando
 );
@@ -84,6 +95,9 @@ assign dout = data_ready ? next_dout : dout_buf;
 // usaba dout (de un byte), que si estaba latcheada.
 reg [DATA_WIDTH-1:0] dout32_buf;
 assign dout32 = dout32_buf;
+reg [DATA_WIDTH-1:0] dout32_a_buf, dout32_b_buf;
+assign dout32_a = dout32_a_buf;
+assign dout32_b = dout32_b_buf;
 assign SDRAM_CLK = clk_sdram;
 assign SDRAM_CKE = 1'b1;
 assign SDRAM_nCS = 1'b0;
@@ -95,6 +109,7 @@ localparam IDLE = 3'd2;
 localparam READ = 3'd3;
 localparam WRITE = 3'd4;
 localparam REFRESH = 3'd5;
+localparam RDBURST2 = 3'd6;
 
 // RAS# CAS# WE#
 localparam CMD_SetModeReg=3'b000;
@@ -153,6 +168,14 @@ always @(posedge clk) begin
             if (wr) din_buf <= din;
             cycle <= 4'd1;
             busy <= 1'b1;
+        end else if (rd_burst2) begin
+            {SDRAM_nRAS, SDRAM_nCAS, SDRAM_nWE} <= CMD_BankActivate;
+            SDRAM_BA <= addr[ROW_WIDTH+COL_WIDTH+BANK_WIDTH-1+2 : ROW_WIDTH+COL_WIDTH+2];
+            SDRAM_A <= addr[ROW_WIDTH+COL_WIDTH-1+2:COL_WIDTH+2];
+            state <= RDBURST2;
+            addr_buf <= addr;
+            cycle <= 4'd1;
+            busy <= 1'b1;
         end else if (refresh) begin
             {SDRAM_nRAS, SDRAM_nCAS, SDRAM_nWE} <= CMD_AutoRefresh;
             state <= REFRESH;
@@ -175,6 +198,31 @@ always @(posedge clk) begin
             dout_buf   <= next_dout;
             dout32_buf <= dq_in;   // misma ventana valida que dout_buf
             busy <= 0;
+            state <= IDLE;
+        end
+
+        // Palabra 1: lee la columna base, SIN auto-precharge (la fila
+        // sigue abierta para la palabra 2). Palabra 2: lee columna+1, CON
+        // auto-precharge -- el chip precarga solo, sin comando ni espera
+        // aparte, igual que ya hace un READ normal de una sola palabra.
+        {RDBURST2, T_RCD}: begin
+            {SDRAM_nRAS, SDRAM_nCAS, SDRAM_nWE} <= CMD_Read;
+            SDRAM_A[10]  <= 1'b0;
+            SDRAM_A[9:0] <= {2'b0, addr_buf[COL_WIDTH-1+2:2]};
+            SDRAM_DQM    <= 4'b0;
+        end
+        {RDBURST2, T_RCD+4'd1}: begin
+            {SDRAM_nRAS, SDRAM_nCAS, SDRAM_nWE} <= CMD_Read;
+            SDRAM_A[10]  <= 1'b1;
+            SDRAM_A[9:0] <= {2'b0, addr_buf[COL_WIDTH-1+2:2]} + 10'd1;
+            SDRAM_DQM    <= 4'b0;
+        end
+        {RDBURST2, T_RCD+CAS+4'd1}: begin
+            dout32_a_buf <= dq_in;
+        end
+        {RDBURST2, T_RCD+CAS+4'd2}: begin
+            dout32_b_buf <= dq_in;
+            busy  <= 0;
             state <= IDLE;
         end
 
