@@ -1,0 +1,2030 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>De compuertas a la NPU</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+:root{
+  --bg:#EEF0EA; --surface:#FFFFFF; --surface-2:#E6E8DE;
+  --ink:#1B2430; --ink-soft:#4A5260; --rule:#D3D2C2;
+  --accent:#B5651D; --accent-ink:#FFFFFF; --accent2:#1F7A72;
+  --accent2-soft:#DCEAE7; --accent-soft:#F3E3D2;
+  --code-bg:#232A22; --code-ink:#E9EBDD; --code-accent:#E0954B;
+  --danger:#A23B2E; --ok:#2E7D46;
+  --shadow: 0 1px 2px rgba(27,36,48,.06), 0 6px 20px -8px rgba(27,36,48,.15);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#12161C; --surface:#181F27; --surface-2:#1E2732;
+    --ink:#E7E7DE; --ink-soft:#A7ADB6; --rule:#2C3541;
+    --accent:#E0954B; --accent-ink:#181005; --accent2:#4FBDB0;
+    --accent2-soft:#16302D; --accent-soft:#2E2416;
+    --code-bg:#0E1310; --code-ink:#DCE3D3; --code-accent:#F0AE6C;
+    --danger:#E07A68; --ok:#5FC585;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px -10px rgba(0,0,0,.5);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#12161C; --surface:#181F27; --surface-2:#1E2732;
+  --ink:#E7E7DE; --ink-soft:#A7ADB6; --rule:#2C3541;
+  --accent:#E0954B; --accent-ink:#181005; --accent2:#4FBDB0;
+  --accent2-soft:#16302D; --accent-soft:#2E2416;
+  --code-bg:#0E1310; --code-ink:#DCE3D3; --code-accent:#F0AE6C;
+  --danger:#E07A68; --ok:#5FC585;
+  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px -10px rgba(0,0,0,.5);
+}
+*{box-sizing:border-box;}
+html{scroll-behavior:smooth;}
+body{margin:0; background:var(--bg); color:var(--ink); font-family:"Public Sans",-apple-system,"Segoe UI",sans-serif; font-size:16px; line-height:1.62;}
+::selection{background:var(--accent-soft); color:var(--ink);}
+a{color:var(--accent);}
+a:focus-visible, button:focus-visible, summary:focus-visible, input:focus-visible{outline:2px solid var(--accent2); outline-offset:2px;}
+h1,h2,h3,h4{font-family:"Spectral",Georgia,serif; font-weight:600; line-height:1.2; text-wrap:balance; color:var(--ink); margin:0 0 .5em 0;}
+p{margin:0 0 1em 0; max-width:70ch;}
+ul,ol{max-width:68ch;}
+code,pre,kbd{font-family:"IBM Plex Mono",ui-monospace,Consolas,monospace;}
+
+/* ---------- shell ---------- */
+.shell{display:grid; grid-template-columns:288px minmax(0,1fr); min-height:100vh;}
+.sidebar{position:sticky; top:0; align-self:start; height:100vh; overflow-y:auto; border-right:1px solid var(--rule); background:var(--surface); padding:20px 16px 40px;}
+.brand{display:flex; align-items:center; gap:10px; margin-bottom:6px; text-decoration:none;}
+.brand .dot{width:10px;height:10px;background:var(--accent2); box-shadow:0 0 0 3px var(--accent2-soft); flex:none;}
+.brand strong{font-family:"Spectral",serif; font-size:1.02rem; color:var(--ink);}
+.progresswrap{margin:14px 2px 18px; }
+.progressbar{height:5px; background:var(--surface-2); border-radius:3px; overflow:hidden;}
+.progressbar > i{display:block; height:100%; background:var(--accent2); width:0%; transition:width .25s;}
+.progresslbl{font-family:"IBM Plex Mono",monospace; font-size:.7rem; color:var(--ink-soft); margin-top:5px;}
+
+nav.toc .grp-label{font-size:.7rem; text-transform:uppercase; letter-spacing:.08em; color:var(--ink-soft); margin:16px 2px 4px; opacity:.75;}
+nav.toc .grp-label:first-child{margin-top:0;}
+nav.toc a{display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:4px; color:var(--ink-soft); text-decoration:none; font-size:.86rem; border-left:2px solid transparent;}
+nav.toc a:hover{background:var(--surface-2); color:var(--ink);}
+nav.toc a.current{color:var(--ink); background:var(--accent-soft); border-left:2px solid var(--accent); font-weight:600;}
+nav.toc a .chk{width:13px; height:13px; border:1.5px solid var(--rule); border-radius:3px; flex:none; display:inline-block; position:relative;}
+nav.toc a.done .chk{background:var(--ok); border-color:var(--ok);}
+nav.toc a.done .chk::after{content:"✓"; position:absolute; inset:0; color:#fff; font-size:9px; display:flex; align-items:center; justify-content:center;}
+
+main{padding:44px clamp(20px,5vw,72px) 90px; min-width:0;}
+.wrap{max-width:780px; margin:0 auto;}
+.page{display:none;}
+.page.active{display:block;}
+
+svg.clocksig{display:block; width:100%; height:16px; margin:14px 0 30px;}
+svg.clocksig path{fill:none; stroke:var(--accent2); stroke-width:2; opacity:.6;}
+
+/* ---------- page head ---------- */
+.crumb{font-family:"IBM Plex Mono",monospace; font-size:.76rem; letter-spacing:.05em; text-transform:uppercase; color:var(--accent2);}
+.page h1{font-size:clamp(1.7rem,3.4vw,2.25rem); margin-top:6px;}
+.dek{color:var(--ink-soft); font-size:1.05rem;}
+
+.callout{background:var(--surface); border:1px solid var(--rule); border-left:3px solid var(--accent2); padding:14px 18px; border-radius:4px; margin:18px 0; box-shadow:var(--shadow);}
+.callout.warn{border-left-color:var(--danger);}
+.callout.req{border-left-color:var(--accent);}
+.callout .lbl{font-family:"IBM Plex Mono",monospace; font-size:.72rem; text-transform:uppercase; letter-spacing:.07em; color:var(--ink-soft); margin-bottom:5px; display:block;}
+.callout p:last-child{margin-bottom:0;}
+
+pre.code{background:var(--code-bg); color:var(--code-ink); padding:15px 17px; border-radius:6px; overflow-x:auto; font-size:.84rem; line-height:1.55; margin:14px 0; border:1px solid rgba(0,0,0,.2);}
+pre.code .c{color:var(--code-accent); opacity:.85;}
+code.inline{background:var(--surface-2); padding:.1em .38em; border-radius:3px; font-size:.87em; border:1px solid var(--rule);}
+
+.tbl-wrap{overflow-x:auto; margin:16px 0;}
+table{border-collapse:collapse; width:100%; min-width:440px; font-size:.9rem;}
+th,td{text-align:left; padding:7px 11px; border-bottom:1px solid var(--rule); font-variant-numeric:tabular-nums;}
+th{font-family:"IBM Plex Mono",monospace; font-size:.73rem; text-transform:uppercase; letter-spacing:.05em; color:var(--ink-soft); border-bottom:2px solid var(--rule);}
+tr:hover td{background:var(--surface-2);}
+
+.steps{margin:14px 0; padding-left:0; list-style:none; counter-reset:step;}
+.steps li{counter-increment:step; padding:6px 0 6px 34px; position:relative; max-width:66ch;}
+.steps li::before{content:counter(step); position:absolute; left:0; top:6px; width:22px; height:22px; border-radius:50%; background:var(--surface-2); border:1px solid var(--rule); color:var(--ink); font-family:"IBM Plex Mono",monospace; font-size:.72rem; display:flex; align-items:center; justify-content:center;}
+
+h3.sec{font-size:1.18rem; margin-top:30px; padding-top:2px;}
+h3.sec .tag{font-family:"IBM Plex Mono",monospace; font-size:.68rem; color:var(--accent); text-transform:uppercase; letter-spacing:.06em; display:block; margin-bottom:2px;}
+
+/* exercises */
+.exercise{background:var(--surface); border:1px solid var(--rule); border-radius:6px; padding:15px 18px; margin:16px 0; box-shadow:var(--shadow);}
+.exercise-head{display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; margin-bottom:6px;}
+.exercise-head h4{margin:0; font-size:1.0rem;}
+.level{display:flex; gap:3px; align-items:center;}
+.level span{width:13px; height:6px; background:var(--rule); display:block; border-radius:1px;}
+.level[data-level="1"] span:nth-child(1){background:var(--accent2);}
+.level[data-level="2"] span:nth-child(-n+2){background:var(--accent2);}
+.level[data-level="3"] span{background:var(--accent2);}
+details{margin-top:8px; border-top:1px dashed var(--rule); padding-top:8px;}
+details summary{cursor:pointer; font-weight:600; color:var(--accent2); font-size:.88rem; list-style:none;}
+details summary::-webkit-details-marker{display:none;}
+details summary::before{content:"▸ ";}
+details[open] summary::before{content:"▾ ";}
+details + details{margin-top:6px; border-top:none; padding-top:2px;}
+.exercise p{margin-bottom:.6em; font-size:.95rem;}
+
+.diagram{background:var(--surface); border:1px solid var(--rule); border-radius:6px; padding:16px; margin:18px 0; overflow-x:auto; box-shadow:var(--shadow);}
+.diagram .cap{font-size:.78rem; color:var(--ink-soft); margin-top:8px; font-family:"IBM Plex Mono",monospace;}
+
+.grid2{display:grid; grid-template-columns:1fr 1fr; gap:16px;}
+.grid3{display:grid; grid-template-columns:repeat(3,1fr); gap:14px;}
+@media (max-width:760px){ .grid2,.grid3{grid-template-columns:1fr;} }
+
+.chip{display:inline-block; font-family:"IBM Plex Mono",monospace; font-size:.76rem; background:var(--surface-2); border:1px solid var(--rule); padding:2px 8px; border-radius:3px; margin:2px 4px 2px 0;}
+
+.checklist{list-style:none; padding:0; margin:14px 0;}
+.checklist li{padding:8px 0 8px 28px; border-bottom:1px solid var(--rule); position:relative; font-size:.95rem;}
+.checklist li::before{content:""; position:absolute; left:0; top:12px; width:13px; height:13px; border:2px solid var(--accent2); border-radius:3px;}
+
+.startbtn{display:inline-flex; align-items:center; gap:8px; background:var(--accent); color:var(--accent-ink); text-decoration:none; font-weight:600; padding:12px 22px; border-radius:5px; font-size:1rem; margin-top:10px;}
+.startbtn:hover{opacity:.92;}
+
+.pagenav{display:flex; justify-content:space-between; align-items:flex-start; gap:14px; margin-top:52px; padding-top:20px; border-top:1px solid var(--rule); flex-wrap:wrap;}
+.pagenav a{text-decoration:none; color:var(--ink); border:1px solid var(--rule); border-radius:6px; padding:12px 16px; display:block; max-width:280px; background:var(--surface); box-shadow:var(--shadow);}
+.pagenav a:hover{border-color:var(--accent2);}
+.pagenav .lbl{display:block; font-family:"IBM Plex Mono",monospace; font-size:.7rem; color:var(--ink-soft); text-transform:uppercase; letter-spacing:.05em; margin-bottom:3px;}
+.pagenav .next{text-align:right; margin-left:auto;}
+.donerow{display:flex; align-items:center; gap:9px; margin-top:28px; font-size:.9rem; color:var(--ink-soft);}
+.donerow input{width:16px; height:16px; accent-color:var(--accent2);}
+
+@media (max-width:900px){
+  .shell{grid-template-columns:1fr;}
+  .sidebar{position:relative; height:auto; max-height:60vh; border-right:none; border-bottom:1px solid var(--rule);}
+  main{padding:30px 18px 70px;}
+}
+</style>
+
+<div class="shell">
+  <aside class="sidebar">
+    <a href="#inicio" class="brand"><span class="dot"></span><strong>De compuertas a la NPU</strong></a>
+    <div class="progresswrap">
+      <div class="progressbar"><i id="progressfill"></i></div>
+      <div class="progresslbl" id="progresslbl">0 / 15 temas completados</div>
+    </div>
+    <nav class="toc" id="toc">
+      <div class="grp-label">Fundamentos</div>
+      <a href="#compuertas" data-route="compuertas"><span class="chk"></span>1 · Compuertas y biestables</a>
+      <a href="#primer-modulo" data-route="primer-modulo"><span class="chk"></span>2 · Tu primer módulo</a>
+      <a href="#sumadores" data-route="sumadores"><span class="chk"></span>3 · Sumadores</a>
+      <a href="#multiplicadores" data-route="multiplicadores"><span class="chk"></span>4 · Multiplicadores y DSP</a>
+      <a href="#clock" data-route="clock"><span class="chk"></span>5 · El clock, bien hecho</a>
+      <a href="#modular" data-route="modular"><span class="chk"></span>6 · Diseño modular</a>
+      <div class="grp-label">Máquinas de estado</div>
+      <a href="#fsm" data-route="fsm"><span class="chk"></span>7 · Tu primera FSM</a>
+      <div class="grp-label">Protocolos de comunicación</div>
+      <a href="#uart" data-route="uart"><span class="chk"></span>8 · UART</a>
+      <a href="#i2c" data-route="i2c"><span class="chk"></span>9 · I2C</a>
+      <a href="#spi" data-route="spi"><span class="chk"></span>10 · SPI</a>
+      <div class="grp-label">Memoria: BRAM</div>
+      <a href="#bram" data-route="bram"><span class="chk"></span>11 · BRAM hardcodeada</a>
+      <a href="#bram-comm" data-route="bram-comm"><span class="chk"></span>12 · BRAM + protocolo: cargar y verificar</a>
+      <div class="grp-label">Memoria: SDRAM</div>
+      <a href="#sdram" data-route="sdram"><span class="chk"></span>13 · SDRAM y sus modos de lectura</a>
+      <a href="#sdram-comm" data-route="sdram-comm"><span class="chk"></span>14 · SDRAM + protocolo: cargar y verificar</a>
+      <div class="grp-label">Proyecto final</div>
+      <a href="#npu" data-route="npu"><span class="chk"></span>15 · Diseñar una NPU por SPI</a>
+    </nav>
+  </aside>
+
+  <main><div class="wrap" id="content">
+
+    <!-- ============================================================ -->
+    <section class="page" id="page-inicio">
+      <span class="crumb">Curso de Verilog · Tang Nano 20K</span>
+      <h1>De compuertas lógicas a una NPU funcionando en un FPGA</h1>
+      <p class="dek">Un curso práctico, tema por tema, para alguien que hoy solo sabe una cosa:
+      "FPGA = Lego de compuertas reconfigurable". Cada página enseña una pieza, con código
+      recomendado específico para la <strong>Sipeed Tang Nano 20K</strong> (chip Gowin
+      GW2AR-18C) y ejercicios para hacer antes de pasar a la siguiente. Al final vas a poder leer
+      y extender el proyecto real de este repositorio: una NPU controlada por SPI.</p>
+      <a class="startbtn" href="#compuertas">Empezar por el Tema 1 →</a>
+
+      <svg class="clocksig" viewBox="0 0 800 16" preserveAspectRatio="none"><path d="M0,12 L16,12 L16,4 L48,4 L48,12 L80,12 L80,4 L112,4 L112,12 L144,12 L144,4 L176,4 L176,12 L208,12 L208,4 L240,4 L240,12 L272,12 L272,4 L304,4 L304,12 L336,12 L336,4 L368,4 L368,12 L400,12 L400,4 L432,4 L432,12 L464,12 L464,4 L496,4 L496,12 L528,12 L528,4 L560,4 L560,12 L592,12 L592,4 L624,4 L624,12 L656,12 L656,4 L688,4 L688,12 L720,12 L720,4 L752,4 L752,12 L784,12 L784,4 L800,4"/></svg>
+
+      <h3 class="sec">Orden del curso — pensado por utilidad, no por tema suelto</h3>
+      <div class="diagram">
+<pre class="mermaid">
+flowchart TD
+    A["Fundamentos (1-6)<br/>compuertas, primer módulo, sumadores,<br/>multiplicadores, clock, diseño modular"] --> B["FSM (7)<br/>tu primera máquina de estados"]
+    B --> C["Protocolos (8-10)<br/>UART, I2C, SPI -- cada uno su propia FSM"]
+    C --> D["BRAM (11-12)<br/>memoria interna: datos fijos, después cargada<br/>y verificada por los 3 protocolos"]
+    D --> E["SDRAM (13-14)<br/>memoria externa/embebida: mismos pasos,<br/>con sus modos de lectura reales"]
+    E --> F["Proyecto final (15)<br/>NPU completa manejada por SPI"]
+</pre>
+        <p class="cap">Cada bloque asume dominado el anterior. No hay atajos: la FSM del Tema 7 es
+        la base literal de los 3 protocolos; los protocolos son la base literal de cómo se carga
+        la BRAM y la SDRAM; y todo eso junto es, literalmente, la NPU del Tema 15.</p>
+      </div>
+
+      <div class="callout req">
+        <span class="lbl">La placa y las herramientas que vas a usar en todo el curso</span>
+        <p><strong>Placa</strong>: Sipeed Tang Nano 20K (chip Gowin GW2AR-LV18QN88C8/I7).
+        <strong>Reloj de la placa</strong>: cristal de 27&nbsp;MHz, entra por el pin físico
+        <code class="inline">4</code> (así lo usa este proyecto: <code class="inline">IO_LOC "clk"
+        4;</code>). <strong>6 LEDs</strong> a bordo, pines <code class="inline">15-20</code>
+        (activos, en este proyecto, en lógica directa — 1 = prendido). <strong>Software</strong>:
+        Gowin IDE (síntesis + place&amp;route + programador) y, opcionalmente pero muy
+        recomendado, <strong>Icarus Verilog + GTKWave</strong> para simular en la PC sin gastar
+        tiempo de compilación real cada vez que querés probar una idea.</p>
+      </div>
+
+      <h3 class="sec">Cómo compilar y grabar cualquier ejercicio</h3>
+      <ol class="steps">
+        <li>Escribí tu módulo <code class="inline">.v</code> y, si corresponde, un
+        <code class="inline">.cst</code> (qué pin físico es cada señal) — los ejemplos de esta
+        guía ya te dan ambos.</li>
+        <li>Sintetizá con el Gowin IDE, o por consola: <code class="inline">gw_sh.exe
+        build.tcl</code> (ver Tema 2 para el contenido de <code class="inline">build.tcl</code>).</li>
+        <li>Programá en RAM primero para probar sin comprometer nada (se borra al desconectar):
+        <code class="inline">programmer_cli.exe --device GW2AR-18C --operation_index 2 --fsFile
+        impl/pnr/fpga_project.fs</code></li>
+        <li>Recién cuando ande, grabalo en flash (permanente, sobrevive a reinicios):
+        mismo comando con <code class="inline">--operation_index 9</code>.</li>
+      </ol>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="page" id="page-compuertas">
+      <span class="crumb">Fundamentos · Tema 1 de 15</span>
+      <h1>Compuertas y biestables</h1>
+      <p class="dek">El vocabulario mínimo: qué es un circuito combinacional, qué es uno
+      secuencial, y por qué necesitás los dos.</p>
+
+      <h3 class="sec">Compuertas: salida = función de las entradas, ahora</h3>
+      <p>Una compuerta lógica tiene una tabla de verdad: para cada combinación de entradas, un
+      valor de salida fijo. Con AND, OR y NOT alcanza para construir cualquier función lógica —
+      es la misma razón por la que una LUT de FPGA (una mini-memoria de 4 a 6 entradas) puede
+      implementar lo que sea, con solo cambiar su contenido.</p>
+
+      <div class="tbl-wrap"><table>
+        <tr><th>A</th><th>B</th><th>AND</th><th>OR</th><th>XOR</th></tr>
+        <tr><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+        <tr><td>0</td><td>1</td><td>0</td><td>1</td><td>1</td></tr>
+        <tr><td>1</td><td>0</td><td>0</td><td>1</td><td>1</td></tr>
+        <tr><td>1</td><td>1</td><td>1</td><td>1</td><td>0</td></tr>
+      </table></div>
+
+      <p>Un circuito hecho solo de compuertas (sin reloj, sin memoria) es <strong>combinacional
+      </strong>: su salida depende únicamente de sus entradas <em>en este instante</em>. En
+      Verilog, esto se escribe con <code class="inline">assign</code>:</p>
+
+      <pre class="code">assign y_and = a &amp; b;
+assign y_or  = a | b;
+assign y_xor = a ^ b;
+assign y_mux = sel ? entrada_1 : entrada_0;   <span class="c">// multiplexor: también es combinacional</span></pre>
+
+      <h3 class="sec">Biestables: la única forma de recordar algo</h3>
+      <p>Nada combinacional puede tener memoria: no hay forma de distinguir "ahora" de "antes".
+      El <strong>flip-flop tipo D</strong> resuelve esto: en el flanco de subida de un reloj,
+      copia su entrada <code class="inline">D</code> a su salida <code class="inline">Q</code>, y
+      la mantiene fija hasta el próximo flanco. Un <strong>registro</strong> de N bits es,
+      simplemente, N flip-flops en paralelo compartiendo el mismo reloj.</p>
+
+      <pre class="code">reg [7:0] contador;               <span class="c">// 8 flip-flops D, uno por bit</span>
+always @(posedge clk) begin
+    contador &lt;= contador + 1;     <span class="c">// se actualiza SOLO en el flanco de subida de clk</span>
+end</pre>
+
+      <div class="callout">
+        <span class="lbl">Analogía en C</span>
+        <p>Combinacional = una expresión pura, se recalcula sola todo el tiempo. Un flip-flop es
+        una variable <code class="inline">static</code> que solo cambia en un punto exacto del
+        programa — acá, ese punto es "cada flanco de reloj": <code class="inline">static int
+        estado; estado = siguiente(estado, entradas);</code> ejecutado para siempre, en paralelo
+        con otros mil bloques iguales.</p>
+      </div>
+
+      <div class="callout warn">
+        <span class="lbl">El error #1 de quien empieza</span>
+        <p>Usar <code class="inline">=</code> (bloqueante) dentro de <code
+        class="inline">always @(posedge clk)</code>. Regla fija para todo este curso: <strong>
+        <code class="inline">&lt;=</code> siempre que haya <code class="inline">posedge
+        clk</code> de por medio; <code class="inline">=</code> solo en <code
+        class="inline">always @(*)</code></strong> (combinacional puro).</p>
+      </div>
+
+      <h3 class="sec">Ejercicios</h3>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>1.1 — Tabla de verdad a mano</h4>
+        <span class="level" data-level="1"><span></span><span></span><span></span></span></div>
+        <p>Sin escribir Verilog todavía: diseñá la tabla de verdad de un circuito de 3 entradas
+        que valga 1 solo cuando <strong>exactamente dos</strong> están en 1. Escribila como
+        expresión de AND/OR/NOT.</p>
+        <details><summary>Solución</summary><p><code class="inline">Y = (A&amp;B&amp;!C) |
+        (A&amp;!B&amp;C) | (!A&amp;B&amp;C)</code></p></details>
+      </div>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>1.2 — Multiplexor de 4 entradas</h4>
+        <span class="level" data-level="1"><span></span><span></span><span></span></span></div>
+        <p>Escribí <code class="inline">mux4.v</code>: 4 entradas de 1 bit, un selector de 2 bits,
+        una salida. Hacelo con <code class="inline">case</code> dentro de <code
+        class="inline">always @(*)</code> (no con <code class="inline">assign</code> anidado).</p>
+        <details><summary>Pista</summary><p><code class="inline">always @(*) case(sel) 2'd0:
+        y=in0; 2'd1: y=in1; ... endcase</code> — y declarar <code class="inline">y</code> como
+        <code class="inline">reg</code>, no <code class="inline">wire</code> (toda señal asignada
+        dentro de un <code class="inline">always</code> tiene que ser <code
+        class="inline">reg</code>, aunque el circuito resultante sea puramente combinacional).</p></details>
+      </div>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>1.3 — Comparador de 4 bits</h4>
+        <span class="level" data-level="1"><span></span><span></span><span></span></span></div>
+        <p>Un módulo con dos entradas de 4 bits y tres salidas: <code class="inline">mayor</code>,
+        <code class="inline">igual</code>, <code class="inline">menor</code>. Todo combinacional.</p>
+      </div>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>1.4 — Flip-flop con enable</h4>
+        <span class="level" data-level="2"><span></span><span></span><span></span></span></div>
+        <p>Un registro de 8 bits que solo carga un valor nuevo cuando una entrada <code
+        class="inline">en</code> vale 1; si <code class="inline">en</code> es 0, mantiene su valor
+        aunque cambie la entrada de datos. (Este patrón —"registro con enable"— es el que vas a
+        usar constantemente de acá en más: es más simple y más seguro que resetear el reloj.)</p>
+        <details><summary>Pista</summary><p><code class="inline">always @(posedge clk) if (en)
+        q &lt;= d;</code> — la ausencia de rama <code class="inline">else</code> ya implica
+        "mantener el valor anterior": es exactamente el comportamiento de un flip-flop real.</p></details>
+      </div>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>1.5 — Detector de flanco de subida</h4>
+        <span class="level" data-level="3"><span></span><span></span><span></span></span></div>
+        <p>Un módulo que reciba una señal de 1 bit y entregue un pulso de exactamente 1 ciclo de
+        reloj cada vez que esa señal pasa de 0 a 1 (aunque se quede en 1 muchos ciclos después).
+        Vas a reusar este patrón —dos flip-flops en cadena, comparados— en el Tema 5 (clock) y
+        después, tal cual, dentro del esclavo SPI real del Tema 10.</p>
+        <details><summary>Pista</summary><p><code class="inline">reg prev; always @(posedge clk)
+        prev &lt;= señal; assign pulso = señal &amp; ~prev;</code></p></details>
+      </div>
+
+      <div class="pagenav">
+        <span></span>
+        <a class="next" href="#primer-modulo"><span class="lbl">Siguiente</span>2 · Tu primer módulo →</a>
+      </div>
+      <div class="donerow"><input type="checkbox" data-done="compuertas" id="done-compuertas"><label for="done-compuertas">Marcar "Compuertas y biestables" como completado</label></div>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="page" id="page-primer-modulo">
+      <span class="crumb">Fundamentos · Tema 2 de 15</span>
+      <h1>Tu primer módulo: escribir, simular, cargar</h1>
+      <p class="dek">El ciclo completo de texto a silicio en la Tang Nano 20K, antes de complicarlo
+      con nada más.</p>
+
+      <p>Verilog describe un circuito que existe <strong>todo el tiempo, en paralelo</strong> —
+      no es una lista de instrucciones que corren en orden. El orden en que aparecen dos bloques
+      en el archivo no importa: los dos son hardware coexistiendo.</p>
+
+      <h3 class="sec">blink.v — el "hola mundo" del hardware</h3>
+      <pre class="code"><span class="c">// blink.v</span>
+module blink (
+    input  wire clk,        <span class="c">// 27 MHz, pin físico 4 en esta placa</span>
+    output reg  [5:0] led    <span class="c">// los 6 LEDs a bordo, pines 15-20</span>
+);
+    reg [23:0] contador;
+
+    always @(posedge clk) begin
+        contador &lt;= contador + 1;
+        led &lt;= {6{contador[23]}};   <span class="c">// los 6 LEDs juntos, prenden/apagan ~1.6 veces/seg</span>
+    end
+endmodule</pre>
+
+      <pre class="code"><span class="c">// blink.cst -- qué pin físico es cada señal (pines reales de este proyecto)</span>
+IO_LOC "clk" 4;
+IO_PORT "clk" IO_TYPE=LVCMOS33;
+
+IO_LOC "led[0]" 15;  IO_LOC "led[1]" 16;  IO_LOC "led[2]" 17;
+IO_LOC "led[3]" 18;  IO_LOC "led[4]" 19;  IO_LOC "led[5]" 20;
+IO_PORT "led[0]" IO_TYPE=LVCMOS33;  IO_PORT "led[1]" IO_TYPE=LVCMOS33;
+IO_PORT "led[2]" IO_TYPE=LVCMOS33;  IO_PORT "led[3]" IO_TYPE=LVCMOS33;
+IO_PORT "led[4]" IO_TYPE=LVCMOS33;  IO_PORT "led[5]" IO_TYPE=LVCMOS33;</pre>
+
+      <h3 class="sec">Simular antes de gastar tiempo de síntesis</h3>
+      <p>Un <strong>testbench</strong> es Verilog que solo corre en la PC: instancia tu módulo,
+      le inyecta estímulos, y no se sintetiza nunca. Sirve para encontrar errores de lógica en
+      segundos, no en los 1-2 minutos que tarda una síntesis real.</p>
+
+      <pre class="code"><span class="c">// blink_tb.v</span>
+module blink_tb;
+    reg clk = 0;
+    wire [5:0] led;
+
+    blink dut (.clk(clk), .led(led));   <span class="c">// dut = "device under test"</span>
+
+    always #18.5 clk = ~clk;            <span class="c">// 27MHz simulado (semiperíodo en ns)</span>
+
+    initial begin
+        $dumpfile("blink.vcd");
+        $dumpvars(0, blink_tb);
+        #2_000_000 $finish;             <span class="c">// simular 2ms de tiempo de circuito</span>
+    end
+endmodule</pre>
+
+      <pre class="code"><span class="c"># en una terminal, sin FPGA conectada:</span>
+iverilog -o sim.out blink.v blink_tb.v
+vvp sim.out
+gtkwave blink.vcd</pre>
+
+      <h3 class="sec">De texto a bitstream, en esta placa</h3>
+      <div class="diagram">
+<pre class="mermaid">
+flowchart LR
+    A["blink.v + blink.cst"] --> B["Síntesis"] --> C["Place &amp; Route"] --> D["fpga_project.fs"]
+    D --> E["programmer_cli.exe"]
+</pre>
+      </div>
+      <ol class="steps">
+        <li>Armá un <code class="inline">build.tcl</code> mínimo: <code class="inline">open_project
+        ...; set_option -top_module blink; run all</code></li>
+        <li><code class="inline">gw_sh.exe build.tcl</code> — si falla con log vacío, reintentá
+        (falla transitoria conocida de la herramienta, no del código).</li>
+        <li><code class="inline">programmer_cli.exe --device GW2AR-18C --operation_index 2
+        --fsFile impl/pnr/fpga_project.fs</code> (RAM, para probar rápido)</li>
+        <li>Confirmado que anda: mismo comando con <code class="inline">--operation_index 9</code>
+        (flash, permanente).</li>
+      </ol>
+
+      <h3 class="sec">Ejercicios</h3>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>2.1 — Parpadeo controlable</h4>
+        <span class="level" data-level="1"><span></span><span></span><span></span></span></div>
+        <p>Agregá una entrada <code class="inline">rapido</code>: en 1, usa
+        <code class="inline">contador[19]</code> en vez de <code class="inline">[23]</code>.
+        Escribí el testbench que fuerza los dos valores y confirma en la forma de onda que el
+        período cambia.</p>
+      </div>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>2.2 — Contador binario visible</h4>
+        <span class="level" data-level="1"><span></span><span></span><span></span></span></div>
+        <p>Mostrá <code class="inline">contador[23:18]</code> directo en los 6 LEDs (en vez de
+        repetir un solo bit). Vas a ver contar en binario, a ojo, a una velocidad legible.</p>
+      </div>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>2.3 — Luces corriendo ("Knight Rider")</h4>
+        <span class="level" data-level="2"><span></span><span></span><span></span></span></div>
+        <p>Un único LED prendido que se desplaza de un extremo al otro de los 6 y vuelve, en
+        bucle, a una velocidad que se vea bien a simple vista. Pista: es un registro de
+        desplazamiento de 6 bits con un temporizador que decide cuándo desplazar.</p>
+        <details><summary>Pista</summary><p>Necesitás dos registros: uno de 6 bits para el patrón
+        de LEDs, y un contador más grande (tipo el de <code class="inline">blink</code>) que, al
+        llegar a un umbral, dispare el desplazamiento y se resetee. No desplaces en cada flanco de
+        27MHz — sería invisible al ojo.</p></details>
+      </div>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>2.4 — Testbench con verificación automática</h4>
+        <span class="level" data-level="2"><span></span><span></span><span></span></span></div>
+        <p>Reescribí el testbench del 2.1 para que, en vez de solo generar la forma de onda,
+        use <code class="inline">if</code> + <code class="inline">$display</code>/<code
+        class="inline">$fatal</code> para chequear automáticamente que a los N ciclos el LED
+        tiene el valor esperado, e imprima "TEST OK" o aborte con un mensaje de error.</p>
+      </div>
+
+      <div class="pagenav">
+        <a href="#compuertas"><span class="lbl">Anterior</span>← 1 · Compuertas y biestables</a>
+        <a class="next" href="#sumadores"><span class="lbl">Siguiente</span>3 · Sumadores →</a>
+      </div>
+      <div class="donerow"><input type="checkbox" data-done="primer-modulo" id="done-primer-modulo"><label for="done-primer-modulo">Marcar "Tu primer módulo" como completado</label></div>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="page" id="page-sumadores">
+      <span class="crumb">Fundamentos · Tema 3 de 15</span>
+      <h1>Sumadores</h1>
+      <p class="dek">De un bit a ocho, y por qué el camino del acarreo importa.</p>
+
+      <p>Un <strong>medio sumador</strong> suma dos bits (suma + acarreo) pero no puede recibir un
+      acarreo entrante. Un <strong>sumador completo</strong> sí: A, B y <code
+      class="inline">cin</code> adentro; suma y <code class="inline">cout</code> afuera.</p>
+
+      <pre class="code">module sumador_completo (
+    input  wire a, b, cin,
+    output wire suma, cout
+);
+    assign suma = a ^ b ^ cin;
+    assign cout = (a &amp; b) | (cin &amp; (a ^ b));   <span class="c">// "mayoría" de los tres bits</span>
+endmodule</pre>
+
+      <p>Encadenando 8 de estos (el <code class="inline">cout</code> de uno al <code
+      class="inline">cin</code> del siguiente) se arma un sumador de 8 bits <em>ripple-carry</em>:
+      el acarreo se propaga bit a bit. En la práctica no lo instanciás a mano —
+      <code class="inline">assign suma = a + b;</code> con buses ya le pide a la síntesis que
+      arme esto por vos— pero entender el acarreo propagándose importa: ese es, literalmente, el
+      camino más largo del circuito (el "camino crítico"), y termina limitando a qué frecuencia
+      de reloj puede correr todo el diseño.</p>
+
+      <pre class="code">module sumador8 (
+    input  wire [7:0] a, b,
+    output wire [8:0] suma      <span class="c">// 9 bits: no perder el acarreo final</span>
+);
+    assign suma = a + b;
+endmodule</pre>
+
+      <h3 class="sec">Ejercicios</h3>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>3.1 — Sumador de 8 bits, con overflow</h4>
+        <span class="level" data-level="1"><span></span><span></span><span></span></span></div>
+        <p>Escribí <code class="inline">sumador8.v</code> (de arriba) y su testbench: un caso sin
+        overflow y uno con overflow real (200 + 100), verificando el bit 8 del resultado.</p>
+      </div>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>3.2 — Sumador completo "a mano", 4 bits</h4>
+        <span class="level" data-level="2"><span></span><span></span><span></span></span></div>
+        <p>Instanciá <code class="inline">sumador_completo</code> 4 veces (con <code
+        class="inline">generate</code>/<code class="inline">for</code>, o a mano) encadenando el
+        acarreo, y compará el resultado contra <code class="inline">assign suma = a + b;</code>
+        con un testbench que pruebe todas las combinaciones de 4+4 bits (son solo 256).</p>
+      </div>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>3.3 — Sumador/restador combinado</h4>
+        <span class="level" data-level="2"><span></span><span></span><span></span></span></div>
+        <p>Un módulo con una entrada <code class="inline">restar</code>: si es 0, calcula
+        <code class="inline">a+b</code>; si es 1, calcula <code class="inline">a-b</code>. Pista:
+        restar es sumar el complemento a dos de B, y complementar a dos es "invertir todos los
+        bits y sumar 1" — con un sumador ya tenés la mitad de ese trabajo hecho.</p>
+        <details><summary>Pista</summary><p><code class="inline">wire [7:0] b_efectivo = restar ?
+        ~b : b; assign {cout, resultado} = a + b_efectivo + restar;</code> — el <code
+        class="inline">+ restar</code> final mete el "+1" del complemento a dos aprovechando el
+        propio <code class="inline">cin</code> del sumador.</p></details>
+      </div>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>3.4 — Acumulador serie</h4>
+        <span class="level" data-level="2"><span></span><span></span><span></span></span></div>
+        <p>Un registro de 16 bits que, en cada flanco de reloj en que una entrada
+        <code class="inline">valido</code> esté en 1, se le sume una entrada de 8 bits. Mostrá
+        los 6 bits más altos del acumulador en los LEDs para verlo crecer en la placa real.</p>
+      </div>
+
+      <div class="pagenav">
+        <a href="#primer-modulo"><span class="lbl">Anterior</span>← 2 · Tu primer módulo</a>
+        <a class="next" href="#multiplicadores"><span class="lbl">Siguiente</span>4 · Multiplicadores y DSP →</a>
+      </div>
+      <div class="donerow"><input type="checkbox" data-done="sumadores" id="done-sumadores"><label for="done-sumadores">Marcar "Sumadores" como completado</label></div>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="page" id="page-multiplicadores">
+      <span class="crumb">Fundamentos · Tema 4 de 15</span>
+      <h1>Multiplicadores y DSP</h1>
+      <p class="dek">Multiplicar con compuertas puras funciona, pero el chip trae algo mejor para
+      esto — y hay que saber cuándo confiar en la herramienta y cuándo no.</p>
+
+      <p>Multiplicar A×B con compuertas es la misma cuenta de la primaria: por cada bit de B,
+      generás A desplazado (o ceros) y sumás todas las filas. Un multiplicador de 8×8 ingenuo
+      necesita ~8 sumadores de 16 bits en cascada — gasta muchas LUTs y tiene un camino crítico
+      largo. Por eso el FPGA trae <strong>multiplicadores duros</strong>: bloques de silicio
+      dedicados (primitivas Gowin como <code class="inline">MULT9X9</code> o <code
+      class="inline">MULTADDALU18X18</code>) que multiplican en un ciclo sin gastar una sola LUT.
+      En Verilog casi nunca los instanciás a mano: <code class="inline">assign p = a * b;</code> y
+      la síntesis los mapea sola, si puede.</p>
+
+      <pre class="code">module mult8 (
+    input  wire clk,
+    input  wire signed [7:0] a, b,
+    output reg  signed [15:0] p
+);
+    always @(posedge clk)
+        p &lt;= a * b;      <span class="c">// registrado: así el resultado también queda en un flip-flop,</span>
+                          <span class="c">// no solo el producto combinacional -- ver por qué en el aviso de abajo</span>
+endmodule</pre>
+
+      <div class="callout warn">
+        <span class="lbl">Lección real de este proyecto</span>
+        <p>En la etapa de producción real, Gowin decidió "ayudar" fusionando el multiplicador con
+        el acumulador dentro de una única primitiva <code class="inline">MULTADDALU18X18</code>.
+        La semántica interna de habilitación de esa primitiva hacía que se perdiera el último
+        producto de cada tanda de cómputo — un bug real, en hardware, invisible en simulación
+        RTL pura. El diagnóstico fue comparar, en el <strong>reporte de síntesis</strong>, qué
+        primitiva de DSP se infirió entre una versión que andaba y una que no
+        (<code class="inline">MULT9X9</code> separado = bien; <code
+        class="inline">MULTADDALU18X18</code> fusionado = mal), y la solución fue una directiva
+        <code class="inline">syn_keep</code> que le prohíbe a la herramienta fusionar esos
+        registros. Moraleja: cuando la síntesis "optimiza" un camino aritmético crítico, hay que
+        poder ver —y vetar— qué decidió.</p>
+      </div>
+
+      <h3 class="sec">Ejercicios</h3>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>4.1 — Multiplicador de 4×4</h4>
+        <span class="level" data-level="1"><span></span><span></span><span></span></span></div>
+        <p>Con <code class="inline">assign p = a * b;</code> directo, testbench que pruebe todas
+        las 256 combinaciones de 4×4 bits.</p>
+      </div>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>4.2 — El mismo multiplicador, "a mano"</h4>
+        <span class="level" data-level="2"><span></span><span></span><span></span></span></div>
+        <p>Implementalo con desplazamientos y sumas (<code class="inline">generate</code> +
+        sumadores del Tema 3, o una cascada explícita). Compará el reporte de síntesis de las dos
+        versiones: cuántas LUTs usa cada una, y si la versión "a mano" también termina mapeada a
+        un DSP.</p>
+      </div>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>4.3 — Multiplicar-acumular (MAC)</h4>
+        <span class="level" data-level="2"><span></span><span></span><span></span></span></div>
+        <p>Un módulo con entradas <code class="inline">a</code>, <code class="inline">b</code> y
+        un pulso <code class="inline">valido</code>: cada vez que <code
+        class="inline">valido</code> está en 1, suma <code class="inline">a*b</code> a un
+        acumulador interno de 32 bits. Agregá una entrada <code class="inline">reset_acc</code>
+        para volver a cero. Este único módulo, instanciado 8 veces, es el corazón entero de la
+        NPU del Tema 15.</p>
+      </div>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>4.4 — Registrar la salida, y ver por qué importa</h4>
+        <span class="level" data-level="3"><span></span><span></span><span></span></span></div>
+        <p>Compará en simulación una versión de <code class="inline">mult8</code> con <code
+        class="inline">assign</code> puro (combinacional) contra la versión registrada de arriba.
+        Con un testbench que cambie <code class="inline">a</code>/<code class="inline">b</code>
+        a mitad de un período de reloj, mostrá en la forma de onda la diferencia entre "el
+        resultado cambia apenas cambia la entrada" y "el resultado cambia recién en el próximo
+        flanco". ¿Cuál de las dos preferirías si <code class="inline">p</code> alimenta, a su vez,
+        la entrada de otro registro?</p>
+      </div>
+
+      <div class="pagenav">
+        <a href="#sumadores"><span class="lbl">Anterior</span>← 3 · Sumadores</a>
+        <a class="next" href="#clock"><span class="lbl">Siguiente</span>5 · El clock, bien hecho →</a>
+      </div>
+      <div class="donerow"><input type="checkbox" data-done="multiplicadores" id="done-multiplicadores"><label for="done-multiplicadores">Marcar "Multiplicadores y DSP" como completado</label></div>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="page" id="page-clock">
+      <span class="crumb">Fundamentos · Tema 5 de 15</span>
+      <h1>El clock, bien hecho</h1>
+      <p class="dek">Por qué "un solo flanco, en todo el diseño" no es un capricho, y qué hacer
+      cuando dos relojes se tienen que hablar.</p>
+
+      <p>Cada flip-flop necesita su entrada estable un poco <em>antes</em> del flanco (tiempo de
+      <em>setup</em>) y un poco <em>después</em> (tiempo de <em>hold</em>). Si todo el diseño usa
+      un único reloj y reacciona solo a flancos de subida, la herramienta de <strong>análisis
+      estático de tiempos</strong> (STA) puede calcular, camino por camino, si todo llega a
+      tiempo. Mezclar flancos, o usar el reloj como una señal de datos común, le rompe esa
+      garantía a la herramienta. Regla de oro de todo este curso: <strong>un dominio de reloj, un
+      solo flanco activo.</strong></p>
+
+      <h3 class="sec">PLL: generar el reloj que en verdad necesitás</h3>
+      <p>El cristal de la placa da 27MHz fijos. Un <strong>PLL</strong> (Phase-Locked Loop) es un
+      bloque duro del chip que multiplica/divide esa frecuencia para generar otras, sin usar
+      lógica programable. Se instancia como cualquier módulo, pero la herramienta del IDE te lo
+      genera con un asistente (IP Core Generator) en vez de escribirlo a mano.</p>
+
+      <div class="callout warn">
+        <span class="lbl">Lección real de este proyecto</span>
+        <p>Se probó subir a 108MHz y la herramienta reportó <strong>0 violaciones de timing</strong>.
+        Igual, en la placa real, los datos salían corruptos. La causa no era el camino
+        combinacional sino el <em>jitter</em> del PLL — variación diminuta e intrínseca del reloj
+        generado, que el STA no modela salvo que se lo pidas explícitamente. El diseño quedó
+        estable en 54MHz. <strong>"0 violaciones" es necesario, no suficiente</strong> — hasta no
+        probarlo en placa real, no hay certeza.</p>
+      </div>
+
+      <h3 class="sec">Cruzar de un dominio de reloj a otro (CDC)</h3>
+      <p>Cuando una señal nace en un reloj (por ejemplo <code class="inline">SCK</code> de un
+      periférico SPI, generado por un chip externo) y la lee lógica de <em>otro</em> reloj (el
+      interno del FPGA), existe una ventana en la que un flip-flop puede quedar en un estado
+      intermedio: <strong>metaestabilidad</strong>. La mitigación estándar es un
+      <strong>sincronizador de dos flip-flops</strong>: el primero puede quedar inestable un
+      instante (nadie más lo mira todavía); el segundo, un ciclo después, entrega un valor ya
+      estable al resto del circuito.</p>
+
+      <div class="diagram">
+<pre class="mermaid">
+flowchart LR
+    ext["señal externa<br/>(otro dominio)"] --> FF1["flip-flop 1<br/>(puede quedar metaestable)"]
+    FF1 -->|1 ciclo después| FF2["flip-flop 2<br/>(ya estable)"]
+    FF2 --> resto["resto del circuito"]
+</pre>
+      </div>
+
+      <pre class="code">module sync2 (
+    input  wire clk,
+    input  wire señal_externa,
+    output reg  señal_sincronizada
+);
+    reg etapa1;
+    always @(posedge clk) begin
+        etapa1             &lt;= señal_externa;
+        señal_sincronizada &lt;= etapa1;
+    end
+endmodule</pre>
+
+      <h3 class="sec">Ejercicios</h3>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>5.1 — Divisor de reloj de 1 segundo</h4>
+        <span class="level" data-level="1"><span></span><span></span><span></span></span></div>
+        <p>Con un contador (sin PLL), generá un pulso de "1 ciclo activo cada N" que marque
+        exactamente 1 segundo a 27MHz. Usalo para un LED que titile 1 vez por segundo con 50% de
+        duty cycle.</p>
+      </div>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>5.2 — Sincronizador de 2 flip-flops en la placa</h4>
+        <span class="level" data-level="2"><span></span><span></span><span></span></span></div>
+        <p>Instanciá <code class="inline">sync2</code> sobre una entrada externa y contá flancos
+        de subida (con el detector del Ejercicio 1.5) tanto de la señal cruda como de la
+        sincronizada, en dos contadores separados, visibles en los LEDs. Documentá qué
+        diferencia notás (o no) con una fuente de señal razonablemente limpia — el punto del
+        ejercicio es el hábito, no que falle a simple vista.</p>
+      </div>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>5.3 — Medir un pulso externo</h4>
+        <span class="level" data-level="3"><span></span><span></span><span></span></span></div>
+        <p>Sincronizá una señal externa con <code class="inline">sync2</code>, detectá su flanco
+        de subida y de bajada, y contá cuántos ciclos de <code class="inline">clk</code> pasaron
+        entre uno y otro (un contador que arranca en el flanco de subida y se congela en el de
+        bajada). Este patrón —medir un ancho de pulso en ciclos de reloj propio— es la base de
+        cualquier receptor UART (Tema 8): ahí vas a medir el ancho de cada bit exactamente así.</p>
+      </div>
+
+      <div class="pagenav">
+        <a href="#multiplicadores"><span class="lbl">Anterior</span>← 4 · Multiplicadores y DSP</a>
+        <a class="next" href="#modular"><span class="lbl">Siguiente</span>6 · Diseño modular →</a>
+      </div>
+      <div class="donerow"><input type="checkbox" data-done="clock" id="done-clock"><label for="done-clock">Marcar "El clock, bien hecho" como completado</label></div>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="page" id="page-modular">
+      <span class="crumb">Fundamentos · Tema 6 de 15</span>
+      <h1>Diseño modular</h1>
+      <p class="dek">"Mi calculadora necesita el sumador de 8 bits que está en otro archivo" — así
+      se ve, en Verilog.</p>
+
+      <p>Cada archivo <code class="inline">.v</code> define uno o más <code
+      class="inline">module</code>. Para usar un módulo de otro archivo no hay <code
+      class="inline">#include</code>: le pasás ambos archivos a la síntesis (o los agregás al
+      proyecto del IDE), y lo <strong>instanciás</strong> por nombre, conectando cada puerto.</p>
+
+      <pre class="code"><span class="c">// calculadora.v -- usa sumador8.v (Tema 3) dos veces, cada una su propia instancia</span>
+module calculadora (
+    input  wire [7:0] a, b, c,
+    input  wire        sumar_c,
+    output wire [8:0]  resultado
+);
+    wire [8:0] parcial;
+
+    sumador8 etapa1 ( .a(a), .b(b), .suma(parcial) );          <span class="c">// conexión por nombre:</span>
+    sumador8 etapa2 ( .a(parcial[7:0]), .b(sumar_c ? c : 8'd0), .suma(resultado) ); <span class="c">// no depende del orden de puertos</span>
+endmodule</pre>
+
+      <p><code class="inline">etapa1</code> y <code class="inline">etapa2</code> son dos
+      circuitos físicos separados, aunque vengan de la misma descripción de texto. Con <code
+      class="inline">parameter</code> el mismo módulo sirve para varios anchos:</p>
+
+      <pre class="code">module sumador_n #(parameter ANCHO = 8) (
+    input  wire [ANCHO-1:0] a, b,
+    output wire [ANCHO:0]   suma
+);
+    assign suma = a + b;
+endmodule
+
+sumador_n #(.ANCHO(16)) sumador_grande ( .a(x), .b(y), .suma(z) );</pre>
+
+      <div class="callout">
+        <span class="lbl">Por qué importa de verdad</span>
+        <p>El proyecto real está organizado exactamente así, por capas que no se conocen entre
+        sí: el esclavo SPI no sabe nada de redes neuronales; un carril multiplicar-acumular no
+        sabe nada de SPI; el motor que orquesta 8 de esos carriles no sabe cómo llegaron los
+        comandos. Esa separación es lo que permitió, en la depuración real, aislar un bug de
+        cableado instanciando <em>solo</em> el carril MAC con datos fijos y sacando el resultado
+        por pines directos — sin pasar por SPI ni por ninguna FSM.</p>
+      </div>
+
+      <h3 class="sec">Ejercicios</h3>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>6.1 — Refactorizar y reutilizar</h4>
+        <span class="level" data-level="1"><span></span><span></span><span></span></span></div>
+        <p>Armá <code class="inline">alu_chica.v</code> que instancie <code
+        class="inline">sumador8.v</code> dos veces para calcular <code
+        class="inline">(a+b)+c</code>, más una entrada <code class="inline">restar</code> que
+        cambie la primera suma por una resta (reutilizá el patrón del Ejercicio 3.3).</p>
+      </div>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>6.2 — Parametrizar el MAC</h4>
+        <span class="level" data-level="2"><span></span><span></span><span></span></span></div>
+        <p>Tomá el módulo MAC del Ejercicio 4.3 y agregale <code class="inline">parameter
+        ANCHO_DATO = 8</code> y <code class="inline">parameter ANCHO_ACC = 32</code>. Instanciálo
+        dos veces en un mismo top-level con anchos distintos, y confirmá con un testbench que las
+        dos instancias acumulan de forma independiente.</p>
+      </div>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>6.3 — Banco de N carriles con <code class="inline">generate</code></h4>
+        <span class="level" data-level="3"><span></span><span></span><span></span></span></div>
+        <p>Con <code class="inline">generate</code>/<code class="inline">for</code>, instanciá
+        <code class="inline">N</code> (parámetro) MACs en paralelo, cada uno con su propio par de
+        entradas <code class="inline">a[i]</code>/<code class="inline">b[i]</code> (arrays de
+        puertos) y su propia salida acumulada. Sumá las N salidas en un único resultado final —
+        esto es, en miniatura exacta, la estructura de "olas de 8 neuronas en paralelo" que arma
+        la NPU del Tema 15.</p>
+      </div>
+
+      <div class="pagenav">
+        <a href="#clock"><span class="lbl">Anterior</span>← 5 · El clock, bien hecho</a>
+        <a class="next" href="#fsm"><span class="lbl">Siguiente</span>7 · Tu primera FSM →</a>
+      </div>
+      <div class="donerow"><input type="checkbox" data-done="modular" id="done-modular"><label for="done-modular">Marcar "Diseño modular" como completado</label></div>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="page" id="page-fsm">
+      <span class="crumb">Máquinas de estado · Tema 7 de 15</span>
+      <h1>Tu primera FSM</h1>
+      <p class="dek">Con compuertas, registros, aritmética, clock correcto y módulos ya
+      dominados, esto es donde se combinan para tomar decisiones.</p>
+
+      <div class="callout req"><span class="lbl">Prerrequisito</span><p>Temas 1 a 6. Una FSM no es
+      una pieza nueva de hardware — es un <strong>registro de estado</strong> (Tema 1) más
+      <strong>lógica combinacional</strong> (Tema 1) que decide, cada flanco de reloj (Tema 5),
+      cuál es el próximo estado.</p></div>
+
+      <p>Una máquina de estados finitos tiene tres partes, siempre: (1) un registro que guarda en
+      qué estado está ahora, (2) lógica combinacional que calcula el próximo estado a partir del
+      estado actual y las entradas, y (3) lógica (a veces la misma) que calcula las salidas. En
+      Verilog, el patrón más robusto separa (1)+(2) del cálculo de salidas:</p>
+
+      <pre class="code"><span class="c">// semaforo.v</span>
+module semaforo (
+    input  wire clk,
+    output reg [2:0] luces   <span class="c">// {rojo, amarillo, verde}</span>
+);
+    localparam ROJO=0, VERDE=1, AMARILLO=2;
+    reg [1:0] estado = ROJO;
+    reg [26:0] timer = 0;
+
+    <span class="c">// duraciones en ciclos de 27MHz: 2s, 2s, 0.5s</span>
+    localparam T_ROJO = 27_000_000*2, T_VERDE = 27_000_000*2, T_AMAR = 27_000_000/2;
+
+    always @(posedge clk) begin
+        timer &lt;= timer + 1;
+        case (estado)
+            ROJO:     if (timer >= T_ROJO)  begin estado &lt;= VERDE;    timer &lt;= 0; end
+            VERDE:    if (timer >= T_VERDE) begin estado &lt;= AMARILLO; timer &lt;= 0; end
+            AMARILLO: if (timer >= T_AMAR)  begin estado &lt;= ROJO;     timer &lt;= 0; end
+        endcase
+    end
+
+    always @(*) begin        <span class="c">// salidas: combinacional puro, función SOLO del estado</span>
+        case (estado)
+            ROJO:     luces = 3'b100;
+            VERDE:    luces = 3'b001;
+            AMARILLO: luces = 3'b010;
+            default:  luces = 3'b000;
+        endcase
+    end
+endmodule</pre>
+
+      <div class="diagram">
+<pre class="mermaid">
+stateDiagram-v2
+    [*] --> ROJO
+    ROJO --> VERDE: timer &gt;= 2s
+    VERDE --> AMARILLO: timer &gt;= 2s
+    AMARILLO --> ROJO: timer &gt;= 0.5s
+</pre>
+        <p class="cap">Este es, en su forma más chica, el mismo diagrama que vas a dibujar para
+        cada protocolo del próximo bloque: estados, y qué condición dispara cada transición.</p>
+      </div>
+
+      <h3 class="sec">Ejercicios</h3>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>7.1 — Semáforo con botón de peatón</h4>
+        <span class="level" data-level="1"><span></span><span></span><span></span></span></div>
+        <p>Agregá una entrada <code class="inline">pedido_peaton</code> (sincronizada con
+        <code class="inline">sync2</code>, Tema 5): si se activa durante el estado VERDE, acorta
+        el tiempo restante de verde a 1 segundo en vez de esperar los 2 completos.</p>
+      </div>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>7.2 — Detector de secuencia "1101"</h4>
+        <span class="level" data-level="2"><span></span><span></span><span></span></span></div>
+        <p>Una FSM que reciba 1 bit por ciclo y active un pulso de salida exactamente cuando los
+        últimos 4 bits recibidos formaron la secuencia <code class="inline">1101</code> (con
+        superposición permitida — <code class="inline">11011101</code> dispara dos veces). Dibujá
+        el diagrama de estados en papel antes de escribir el Verilog.</p>
+        <details><summary>Pista</summary><p>5 estados: cuántos bits del prefijo de "1101" llevás
+        reconocidos hasta ahora (0, 1, 11, 110, 1101→dispara y vuelve a un estado válido según el
+        bit que cierra la coincidencia, no necesariamente a 0).</p></details>
+      </div>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>7.3 — FSM de comando genérica</h4>
+        <span class="level" data-level="2"><span></span><span></span><span></span></span></div>
+        <p>Un esqueleto de 3 estados —<code class="inline">ESPERANDO</code>, <code
+        class="inline">DECODIFICAR</code>, <code class="inline">EJECUTAR</code>— que reciba un
+        "comando" de 2 bits ya listo en un registro (todavía sin protocolo serie real) y, según el
+        valor, escriba en uno de 4 registros de salida distintos. Esta estructura de 3 estados es,
+        literalmente, el esqueleto que vas a reusar en los tres protocolos del próximo bloque.</p>
+      </div>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>7.4 — FSM con timeout</h4>
+        <span class="level" data-level="3"><span></span><span></span><span></span></span></div>
+        <p>Extendé el Ejercicio 7.3 con un timer: si la FSM queda en <code
+        class="inline">DECODIFICAR</code> más de cierta cantidad de ciclos sin que llegue una
+        señal de "dato listo", vuelve sola a <code class="inline">ESPERANDO</code> en vez de
+        quedar trabada para siempre. Este patrón evita que un protocolo real se cuelgue si el
+        maestro externo corta la comunicación a mitad de una trama.</p>
+      </div>
+
+      <div class="pagenav">
+        <a href="#modular"><span class="lbl">Anterior</span>← 6 · Diseño modular</a>
+        <a class="next" href="#uart"><span class="lbl">Siguiente</span>8 · UART →</a>
+      </div>
+      <div class="donerow"><input type="checkbox" data-done="fsm" id="done-fsm"><label for="done-fsm">Marcar "Tu primera FSM" como completado</label></div>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="page" id="page-uart">
+      <span class="crumb">Protocolos · Tema 8 de 15</span>
+      <h1>UART</h1>
+      <p class="dek">El más simple de los tres: sin reloj compartido, cada byte se las arregla
+      solo.</p>
+
+      <div class="callout req"><span class="lbl">Prerrequisito</span><p>Tema 7 (FSM) y Ejercicio
+      5.3 (medir un pulso en ciclos de reloj propio) — es exactamente la técnica que un receptor
+      UART usa para encontrar el centro de cada bit.</p></div>
+
+      <p>UART manda cada byte con un <strong>bit de inicio</strong> (siempre 0), 8 bits de datos
+      (típicamente LSB primero) y un <strong>bit de parada</strong> (siempre 1) — sin ninguna
+      señal de reloj compartida entre los dos lados. Ambos tienen que estar de acuerdo de
+      antemano en la velocidad (<em>baudrate</em>, ej. 115200 bits/seg); cada lado cuenta sus
+      propios ciclos de reloj para saber cuánto dura un bit.</p>
+
+      <div class="diagram">
+<pre class="mermaid">
+flowchart LR
+    idle["línea en reposo = 1"] --> start["bit de inicio = 0"] --> d0["d0"] --> d1["d1"] --> dots["... 8 bits ..."] --> d7["d7"] --> stop["bit de parada = 1"] --> idle
+</pre>
+      </div>
+
+      <h3 class="sec">Código recomendado: transmisor</h3>
+      <pre class="code">module uart_tx #(
+    parameter CLK_HZ  = 27_000_000,
+    parameter BAUD    = 115200
+) (
+    input  wire clk,
+    input  wire [7:0] dato,
+    input  wire enviar,       <span class="c">// pulso de 1 ciclo: "mandá este byte"</span>
+    output reg  tx = 1,       <span class="c">// línea en reposo = 1</span>
+    output reg  ocupado = 0
+);
+    localparam CICLOS_POR_BIT = CLK_HZ / BAUD;
+    reg [15:0] contador;
+    reg [3:0]  bit_idx;
+    reg [9:0]  trama;         <span class="c">// {parada, d7..d0, inicio} -- se desplaza hacia tx</span>
+
+    always @(posedge clk) begin
+        if (enviar &amp;&amp; !ocupado) begin
+            trama    &lt;= {1'b1, dato, 1'b0};   <span class="c">// parada=1, datos, inicio=0</span>
+            ocupado  &lt;= 1;
+            contador &lt;= 0;
+            bit_idx  &lt;= 0;
+        end else if (ocupado) begin
+            if (contador == CICLOS_POR_BIT-1) begin
+                contador &lt;= 0;
+                tx       &lt;= trama[0];
+                trama    &lt;= {1'b1, trama[9:1]};
+                if (bit_idx == 9) ocupado &lt;= 0;
+                else              bit_idx &lt;= bit_idx + 1;
+            end else contador &lt;= contador + 1;
+        end
+    end
+endmodule</pre>
+
+      <h3 class="sec">Código recomendado: receptor</h3>
+      <pre class="code">module uart_rx #(
+    parameter CLK_HZ = 27_000_000,
+    parameter BAUD   = 115200
+) (
+    input  wire clk,
+    input  wire rx_sync,        <span class="c">// ya pasada por sync2 (Tema 5) -- entra de un chip externo</span>
+    output reg  [7:0] dato,
+    output reg  listo = 0       <span class="c">// pulso de 1 ciclo cuando un byte quedó completo</span>
+);
+    localparam CICLOS_POR_BIT = CLK_HZ / BAUD;
+    localparam ESPERA=0, INICIO=1, DATOS=2, PARADA=3;
+    reg [1:0]  estado = ESPERA;
+    reg [15:0] contador;
+    reg [2:0]  bit_idx;
+
+    always @(posedge clk) begin
+        listo &lt;= 0;
+        case (estado)
+            ESPERA: if (!rx_sync) begin estado &lt;= INICIO; contador &lt;= 0; end
+            INICIO: begin  <span class="c">// esperar medio bit para muestrear en el CENTRO del bit de inicio</span>
+                if (contador == CICLOS_POR_BIT/2) begin
+                    estado &lt;= rx_sync ? ESPERA : DATOS;  <span class="c">// falso arranque: no era un 0 real</span>
+                    contador &lt;= 0; bit_idx &lt;= 0;
+                end else contador &lt;= contador + 1;
+            end
+            DATOS: begin
+                if (contador == CICLOS_POR_BIT-1) begin
+                    contador &lt;= 0;
+                    dato[bit_idx] &lt;= rx_sync;
+                    if (bit_idx == 7) estado &lt;= PARADA;
+                    else              bit_idx &lt;= bit_idx + 1;
+                end else contador &lt;= contador + 1;
+            end
+            PARADA: begin
+                if (contador == CICLOS_POR_BIT-1) begin
+                    estado &lt;= ESPERA;
+                    listo  &lt;= 1;         <span class="c">// 'dato' ya está completo y estable</span>
+                end else contador &lt;= contador + 1;
+            end
+        endcase
+    end
+endmodule</pre>
+
+      <div class="callout">
+        <span class="lbl">Elegir los pines</span>
+        <p>El proyecto real de este repositorio solo usa SPI, así que no hay pines de UART/I2C ya
+        asignados para copiar. Elegí dos pines libres del header de la Tang Nano 20K según el
+        pinout oficial de Sipeed (evitá los que ya están en uso: <code class="inline">4</code>
+        clock, <code class="inline">15-20</code> LEDs, <code class="inline">71/72/79/86</code>
+        SPI de este proyecto) y declaralos igual que el resto: <code class="inline">IO_LOC
+        "uart_tx" &lt;pin&gt;; IO_PORT "uart_tx" IO_TYPE=LVCMOS33;</code></p>
+      </div>
+
+      <h3 class="sec">Ejercicios</h3>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>8.1 — Eco simple</h4>
+        <span class="level" data-level="1"><span></span><span></span><span></span></span></div>
+        <p>Instanciá <code class="inline">uart_rx</code> y <code class="inline">uart_tx</code>
+        juntos: cada byte que llega por <code class="inline">rx</code>, mandalo de vuelta tal
+        cual por <code class="inline">tx</code>. Probalo desde la PC con un conversor
+        USB-serie y un programa de terminal.</p>
+      </div>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>8.2 — Eco +1</h4>
+        <span class="level" data-level="1"><span></span><span></span><span></span></span></div>
+        <p>Igual que 8.1, pero devolvé <code class="inline">dato + 1</code> en vez del byte tal
+        cual (reusá el sumador del Tema 3).</p>
+      </div>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>8.3 — Contador de bytes recibidos, en los LEDs</h4>
+        <span class="level" data-level="2"><span></span><span></span><span></span></span></div>
+        <p>Sumá un registro de 6 bits que se incremente cada vez que <code
+        class="inline">listo</code> se activa, mostrado directo en los 6 LEDs — una forma visual
+        de confirmar, sin PC, que la recepción no está perdiendo bytes.</p>
+      </div>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>8.4 — FSM de comando sobre UART</h4>
+        <span class="level" data-level="3"><span></span><span></span><span></span></span></div>
+        <p>Extendé el Ejercicio 7.3 (FSM de comando genérica) para que el "comando" y el "dato"
+        lleguen como dos bytes UART consecutivos (<code class="inline">[CMD][DATO]</code>), en
+        vez de estar ya listos en un registro. Comandos sugeridos: <code
+        class="inline">0x01</code> = prender un LED indicado por <code class="inline">DATO</code>;
+        <code class="inline">0x02</code> = apagar todos. Esto ya es, en miniatura, el mismo
+        esqueleto que vas a usar con la BRAM en el Tema 12.</p>
+      </div>
+
+      <div class="pagenav">
+        <a href="#fsm"><span class="lbl">Anterior</span>← 7 · Tu primera FSM</a>
+        <a class="next" href="#i2c"><span class="lbl">Siguiente</span>9 · I2C →</a>
+      </div>
+      <div class="donerow"><input type="checkbox" data-done="uart" id="done-uart"><label for="done-uart">Marcar "UART" como completado</label></div>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="page" id="page-i2c">
+      <span class="crumb">Protocolos · Tema 9 de 15</span>
+      <h1>I2C</h1>
+      <p class="dek">Un bus compartido por varios dispositivos, con direcciones y confirmación por
+      hardware — más complejo que UART, más liviano en pines que SPI.</p>
+
+      <div class="callout req"><span class="lbl">Prerrequisito</span><p>Temas 7 (FSM) y 5 (CDC) —
+      acá <code class="inline">SCL</code> también es un reloj externo, igual que <code
+      class="inline">SCK</code> en SPI.</p></div>
+
+      <p>I2C usa dos hilos compartidos por varios dispositivos: <code class="inline">SCL</code>
+      (reloj, lo genera el maestro) y <code class="inline">SDA</code> (datos, bidireccional). Cada
+      byte va seguido de un bit de <strong>ACK</strong>: quien recibe tira <code
+      class="inline">SDA</code> a 0 un ciclo para confirmar. Una transacción empieza con una
+      <strong>condición de START</strong> (SDA baja mientras SCL está alto) y termina con
+      <strong>STOP</strong> (SDA sube mientras SCL está alto) — las únicas dos veces que SDA
+      cambia con SCL en alto; en cualquier otro momento, SDA solo cambia con SCL en bajo.</p>
+
+      <div class="diagram">
+<pre class="mermaid">
+flowchart LR
+    S["START"] --> A["dirección (7 bits) + R/W"] --> ACK1["ACK"] --> D["byte de datos"] --> ACK2["ACK"] --> P["STOP<br/>(o repetir con otro byte)"]
+</pre>
+      </div>
+
+      <div class="callout warn">
+        <span class="lbl">Versión simplificada de este curso</span>
+        <p>SDA es bidireccional (open-drain) — cada lado solo puede tirarla a 0, nunca forzarla a
+        1 (la sube una resistencia externa). En Verilog esto se modela con <code
+        class="inline">assign sda = manejar_sda ? 1'b0 : 1'bz;</code> — nunca <code
+        class="inline">assign sda = 1;</code>. El módulo de abajo es un <strong>target
+        (esclavo) de dirección fija</strong>, sin clock-stretching ni START repetido: alcanza y
+        sobra para los ejercicios de este curso, no es una implementación completa del
+        estándar.</p>
+      </div>
+
+      <h3 class="sec">Código recomendado: target I2C con un registro de 8 bits</h3>
+      <pre class="code">module i2c_target #(
+    parameter [6:0] DIRECCION = 7'h42
+) (
+    input  wire clk,
+    input  wire scl,             <span class="c">// ya sincronizado con sync2 (Tema 5)</span>
+    inout  wire sda,
+    output reg  [7:0] reg_dato = 0   <span class="c">// lo que se escribió por el bus</span>
+);
+    reg sda_out = 0, manejar_sda = 0;
+    assign sda = manejar_sda ? sda_out : 1'bz;
+
+    reg sda_prev, scl_prev;
+    wire start_cond = scl &amp;&amp; scl_prev &amp;&amp; sda_prev &amp;&amp; !sda;  <span class="c">// SDA baja con SCL alto</span>
+    wire stop_cond  = scl &amp;&amp; scl_prev &amp;&amp; !sda_prev &amp;&amp; sda;  <span class="c">// SDA sube con SCL alto</span>
+
+    localparam ESPERA=0, DIR=1, ACK_DIR=2, DATO=3, ACK_DATO=4;
+    reg [2:0] estado = ESPERA;
+    reg [3:0] bit_idx;
+    reg [7:0] shift_in;
+    reg       rw_bit;
+
+    always @(posedge clk) begin
+        sda_prev &lt;= sda; scl_prev &lt;= scl;
+        manejar_sda &lt;= 0;
+
+        if (start_cond) begin
+            estado &lt;= DIR; bit_idx &lt;= 0;
+        end else if (stop_cond) begin
+            estado &lt;= ESPERA;
+        end else if (scl &amp;&amp; !scl_prev) begin  <span class="c">// flanco de subida de SCL: muestrear SDA</span>
+            case (estado)
+                DIR: begin
+                    shift_in &lt;= {shift_in[6:0], sda};
+                    if (bit_idx == 7) estado &lt;= ACK_DIR;
+                    else bit_idx &lt;= bit_idx + 1;
+                end
+                DATO: begin
+                    shift_in &lt;= {shift_in[6:0], sda};
+                    if (bit_idx == 7) estado &lt;= ACK_DATO;
+                    else bit_idx &lt;= bit_idx + 1;
+                end
+            endcase
+        end else if (!scl &amp;&amp; scl_prev) begin  <span class="c">// flanco de bajada: preparar la próxima respuesta</span>
+            case (estado)
+                ACK_DIR: begin
+                    rw_bit &lt;= shift_in[0];
+                    if (shift_in[7:1] == DIRECCION) begin
+                        manejar_sda &lt;= 1; sda_out &lt;= 0;  <span class="c">// ACK: acepto la dirección</span>
+                        estado &lt;= DATO; bit_idx &lt;= 0;
+                    end else estado &lt;= ESPERA;            <span class="c">// no es mi dirección</span>
+                end
+                ACK_DATO: begin
+                    reg_dato &lt;= shift_in;                 <span class="c">// byte ya completo y confirmado</span>
+                    manejar_sda &lt;= 1; sda_out &lt;= 0;        <span class="c">// ACK del dato</span>
+                    estado &lt;= DATO; bit_idx &lt;= 0;          <span class="c">// admite varios bytes seguidos</span>
+                end
+            endcase
+        end
+    end
+endmodule</pre>
+
+      <h3 class="sec">Ejercicios</h3>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>9.1 — Ver el registro en los LEDs</h4>
+        <span class="level" data-level="1"><span></span><span></span><span></span></span></div>
+        <p>Instanciá <code class="inline">i2c_target</code> y mostrá los 6 bits altos de <code
+        class="inline">reg_dato</code> en los LEDs. Probalo con un maestro I2C externo (otro
+        microcontrolador, o un analizador lógico USB) mandando bytes a la dirección
+        <code class="inline">0x42</code>.</p>
+      </div>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>9.2 — Múltiples registros direccionables</h4>
+        <span class="level" data-level="2"><span></span><span></span><span></span></span></div>
+        <p>Extendé el módulo para que el <strong>primer</strong> byte después del ACK de
+        dirección sea un índice de registro (0-15), y el segundo byte se guarde en un banco de 16
+        registros de 8 bits en esa posición — el patrón típico de "sensor I2C real" (dirección de
+        registro + valor).</p>
+      </div>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>9.3 — Lectura (el target manda datos)</h4>
+        <span class="level" data-level="3"><span></span><span></span><span></span></span></div>
+        <p>Soportá <code class="inline">rw_bit == 1</code> (lectura): después del ACK de
+        dirección, el target tiene que manejar <code class="inline">sda</code> con los 8 bits de
+        <code class="inline">reg_dato</code>, uno por flanco de bajada de SCL, y soltar la línea
+        para que el maestro mande el ACK/NACK final. Esto requiere trackear "quién maneja SDA
+        ahora" con más cuidado que en escritura — documentá en un comentario por qué cada
+        transición de <code class="inline">manejar_sda</code> es segura.</p>
+      </div>
+
+      <div class="pagenav">
+        <a href="#uart"><span class="lbl">Anterior</span>← 8 · UART</a>
+        <a class="next" href="#spi"><span class="lbl">Siguiente</span>10 · SPI →</a>
+      </div>
+      <div class="donerow"><input type="checkbox" data-done="i2c" id="done-i2c"><label for="done-i2c">Marcar "I2C" como completado</label></div>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="page" id="page-spi">
+      <span class="crumb">Protocolos · Tema 10 de 15</span>
+      <h1>SPI</h1>
+      <p class="dek">El protocolo que usa el proyecto real de este repositorio — acá vas a ver el
+      módulo tal cual está en producción, no una versión simplificada.</p>
+
+      <div class="callout req"><span class="lbl">Prerrequisito</span><p>Temas 7 y 5. SPI es el más
+      rápido de los tres (reloj compartido, full-duplex) y el que exige el CDC más cuidadoso.</p></div>
+
+      <p>SPI usa 4 señales: <code class="inline">SCK</code> (reloj, lo genera el maestro —
+      acá, el ESP32), <code class="inline">MOSI</code> (maestro→esclavo), <code
+      class="inline">MISO</code> (esclavo→maestro) y <code class="inline">CS</code> (chip select,
+      marca inicio/fin de trama). Es <strong>full-duplex</strong>: cada bit que entra por
+      <code class="inline">MOSI</code>, sale simultáneamente un bit por <code
+      class="inline">MISO</code> — dos registros de desplazamiento funcionando a la vez.</p>
+
+      <h3 class="sec">Código recomendado: el esclavo SPI real de este proyecto</h3>
+      <p>Este es <code class="inline">spi_slave.v</code> tal cual vive en
+      <code class="inline">fpga_project/src/00_comun/</code>, escrito y depurado una única vez y
+      nunca modificado después en ninguna etapa siguiente:</p>
+
+      <pre class="code"><span class="c">// spi_slave.v -- modo 0 (CPOL=0, CPHA=0), frame de ancho fijo FRAME_BITS</span>
+module spi_slave #(
+    parameter integer FRAME_BITS = 48
+)(
+    input  wire                   clk,        <span class="c">// reloj de sistema (27MHz)</span>
+    input  wire                   sclk,       <span class="c">// SCLK del SPI, generado por el ESP32 (asíncrono a clk)</span>
+    input  wire                   cs_n,       <span class="c">// chip select activo en bajo (asíncrono a clk)</span>
+    input  wire                   mosi,
+    output wire                   miso,
+    input  wire [FRAME_BITS-1:0]  tx_data,    <span class="c">// valor a devolver, se lee en vivo bit a bit</span>
+    output reg  [FRAME_BITS-1:0]  rx_data = {FRAME_BITS{1'b0}},
+    output wire                   frame_done  <span class="c">// pulso de 1 ciclo de 'clk' por cada frame</span>
+);
+    <span class="c">// -- dominio SCLK: captura de MOSI, puramente síncrona --</span>
+    reg [FRAME_BITS-1:0] shift_in = {FRAME_BITS{1'b0}};
+    always @(posedge sclk)
+        if (!cs_n) shift_in &lt;= {shift_in[FRAME_BITS-2:0], mosi};   <span class="c">// MSB primero</span>
+
+    <span class="c">// -- dominio SCLK: índice de bit para MISO. El reset asíncrono de este</span>
+    <span class="c">// contador es a una CONSTANTE fija (Gowin desaconseja set/reset asíncrono</span>
+    <span class="c">// mezclado sobre datos no constantes) --</span>
+    reg [5:0] bit_idx;
+    always @(negedge sclk or posedge cs_n)
+        if (cs_n) bit_idx &lt;= FRAME_BITS - 1;
+        else      bit_idx &lt;= bit_idx - 1'b1;
+
+    assign miso = tx_data[bit_idx];
+
+    <span class="c">// -- cruce a dominio 'clk': sincronizador + detector de flanco (Tema 5) --</span>
+    reg cs_sync0=1, cs_sync1=1, cs_sync2=1;
+    always @(posedge clk) begin
+        cs_sync0 &lt;= cs_n; cs_sync1 &lt;= cs_sync0; cs_sync2 &lt;= cs_sync1;
+    end
+    assign frame_done = cs_sync1 &amp; ~cs_sync2;   <span class="c">// flanco de subida de CS, ya sincronizado</span>
+
+    always @(posedge clk)
+        if (frame_done) rx_data &lt;= shift_in;    <span class="c">// cruza shift_in (dominio sclk) -> clk</span>
+endmodule</pre>
+
+      <div class="callout">
+        <span class="lbl">Tres decisiones de diseño que vale la pena notar</span>
+        <p>(1) <code class="inline">shift_in</code> se cruza a <code class="inline">clk</code>
+        <strong>registrado</strong> (nunca leído combinacional desde el dominio rápido) —
+        exactamente la regla del Tema 5. (2) El reset asíncrono de <code
+        class="inline">bit_idx</code> es a una constante, no a un valor variable — Gowin
+        desaconseja lo segundo. (3) <code class="inline">tx_data</code> se lee de forma
+        combinacional durante todo el frame porque el consumidor lo mantiene estable hasta que el
+        frame termina — un atajo válido acá, pero que hay que justificar explícitamente cada
+        vez que se usa, no asumir en general.</p>
+      </div>
+
+      <p>Pines reales de este proyecto (<code class="inline">top.cst</code>):</p>
+      <div class="tbl-wrap"><table>
+        <tr><th>Señal</th><th>Pin físico</th></tr>
+        <tr><td class="mono">sclk</td><td>72</td></tr>
+        <tr><td class="mono">cs_n</td><td>71 (PULL_MODE=UP)</td></tr>
+        <tr><td class="mono">mosi</td><td>79</td></tr>
+        <tr><td class="mono">miso</td><td>86</td></tr>
+      </table></div>
+
+      <h3 class="sec">Ejercicios</h3>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>10.1 — Eco de un byte</h4>
+        <span class="level" data-level="1"><span></span><span></span><span></span></span></div>
+        <p>Instanciá <code class="inline">spi_slave</code> con <code class="inline">FRAME_BITS =
+        8</code>. Conectá <code class="inline">tx_data</code> directo a un registro que guarda el
+        último <code class="inline">rx_data</code> — el siguiente frame devuelve el byte anterior
+        (recordá: SPI es full-duplex, el primer frame siempre trae basura de vuelta).</p>
+      </div>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>10.2 — FSM de comando sobre SPI</h4>
+        <span class="level" data-level="2"><span></span><span></span><span></span></span></div>
+        <p>Con <code class="inline">FRAME_BITS = 16</code> (<code class="inline">[CMD][DATO]</code>),
+        reusá la FSM del Ejercicio 8.4 pero disparada por <code class="inline">frame_done</code>
+        en vez de un byte UART: <code class="inline">0x01</code> prende un LED indicado por
+        DATO, <code class="inline">0x02</code> apaga todos.</p>
+      </div>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>10.3 — Simular el maestro en un testbench</h4>
+        <span class="level" data-level="2"><span></span><span></span><span></span></span></div>
+        <p>Escribí un testbench para <code class="inline">spi_slave</code> que genere
+        <code class="inline">sclk</code>/<code class="inline">mosi</code>/<code
+        class="inline">cs_n</code> a mano (sin ESP32 real) y verifique, leyendo <code
+        class="inline">miso</code> bit a bit durante el frame, que <code
+        class="inline">tx_data</code> sale completo y en el orden correcto.</p>
+      </div>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>10.4 — Comparar los tres protocolos, en la misma placa</h4>
+        <span class="level" data-level="3"><span></span><span></span><span></span></span></div>
+        <p>Con los tres módulos ya construidos (UART, I2C, SPI), medí cuántos bytes por segundo
+        puede sostener cada uno hacia el mismo registro de 8 bits, en igualdad de condiciones
+        razonables (misma placa, mismo reloj de sistema). No hace falta un número exacto —
+        alcanza con confirmar en la práctica el orden relativo que la teoría predice: SPI
+        más rápido, después I2C, después UART.</p>
+      </div>
+
+      <div class="pagenav">
+        <a href="#i2c"><span class="lbl">Anterior</span>← 9 · I2C</a>
+        <a class="next" href="#bram"><span class="lbl">Siguiente</span>11 · BRAM hardcodeada →</a>
+      </div>
+      <div class="donerow"><input type="checkbox" data-done="spi" id="done-spi"><label for="done-spi">Marcar "SPI" como completado</label></div>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="page" id="page-bram">
+      <span class="crumb">Memoria: BRAM · Tema 11 de 15</span>
+      <h1>BRAM con datos hardcodeados</h1>
+      <p class="dek">Antes de cargar memoria desde afuera, aprender a describirla y a
+      inicializarla con datos fijos.</p>
+
+      <p>Un registro por byte no escala. Un FPGA trae bloques de memoria dedicados (BRAM) — en la
+      Tang Nano 20K, del orden de 46 bloques. Casi nunca se instancian a mano: se describe un
+      array y un patrón de acceso reconocible, y la síntesis <strong>infiere</strong> el bloque
+      duro.</p>
+
+      <pre class="code">module rom_datos (
+    input  wire clk,
+    input  wire [3:0] addr,       <span class="c">// 16 posiciones</span>
+    output reg  [7:0] dato
+);
+    reg [7:0] mem [0:15];
+
+    initial begin      <span class="c">// datos hardcodeados -- solo válido para inicializar ROM/BRAM,</span>
+                        <span class="c">// no es "código que corre": la síntesis lo carga en el bloque de memoria</span>
+        mem[0]=8'd10; mem[1]=8'd20; mem[2]=8'd30; mem[3]=8'd40;
+        mem[4]=8'd50; mem[5]=8'd60; mem[6]=8'd70; mem[7]=8'd80;
+        mem[8]=8'hFF; mem[9]=8'h00; mem[10]=8'hAA; mem[11]=8'h55;
+        mem[12]=8'd1; mem[13]=8'd2; mem[14]=8'd3; mem[15]=8'd4;
+    end
+
+    always @(posedge clk)
+        dato &lt;= mem[addr];        <span class="c">// lectura REGISTRADA: sale 1 ciclo después de addr</span>
+endmodule</pre>
+
+      <div class="callout warn">
+        <span class="lbl">La latencia de 1 ciclo no es un detalle cosmético</span>
+        <p>Es literalmente cómo funciona el silicio de la BRAM por dentro. Diseñar una FSM que la
+        use asumiendo lectura inmediata (latencia 0) es una fuente clásica de bugs de "anda en
+        simulación ingenua, falla con timing real" — el mismo tipo de trampa que la latencia de
+        un ciclo del multiplicador registrado del Tema 4.</p>
+      </div>
+
+      <h3 class="sec">Memoria de lectura y escritura (no solo ROM)</h3>
+      <pre class="code">module banco_pesos (
+    input  wire        clk,
+    input  wire        wr_en,
+    input  wire [11:0] addr,      <span class="c">// 4096 posiciones</span>
+    input  wire [7:0]  wdata,
+    output reg  [7:0]  rdata
+);
+    reg [7:0] mem [0:4095];
+
+    always @(posedge clk) begin
+        if (wr_en) mem[addr] &lt;= wdata;
+        rdata &lt;= mem[addr];       <span class="c">// si addr == la que se acaba de escribir, en Gowin</span>
+    end                            <span class="c">// esto suele leer el valor VIEJO ese mismo ciclo -- probalo</span>
+endmodule                          <span class="c">// en el Ejercicio 11.3</span></pre>
+
+      <h3 class="sec">Ejercicios</h3>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>11.1 — Recorrer la ROM en los LEDs</h4>
+        <span class="level" data-level="1"><span></span><span></span><span></span></span></div>
+        <p>Instanciá <code class="inline">rom_datos</code> y, con un divisor de reloj (Tema 5),
+        recorré las 16 direcciones en bucle, mostrando cada <code class="inline">dato</code> (los
+        6 bits bajos) en los LEDs a una velocidad legible.</p>
+      </div>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>11.2 — Escribir y leer, sin protocolo externo</h4>
+        <span class="level" data-level="1"><span></span><span></span><span></span></span></div>
+        <p>Instanciá <code class="inline">banco_pesos</code>. Con una pequeña FSM interna (sin
+        SPI/UART/I2C todavía), escribí 4 valores fijos en 4 direcciones distintas y después
+        leélos de vuelta, comparando cada uno contra lo esperado con <code
+        class="inline">$display</code>/<code class="inline">$fatal</code> en un testbench.</p>
+      </div>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>11.3 — El bug de "leer lo que se acaba de escribir"</h4>
+        <span class="level" data-level="2"><span></span><span></span><span></span></span></div>
+        <p>En simulación, escribí en la dirección 5 y, en el <strong>mismo ciclo</strong>, pedí
+        leer la dirección 5. Observá en la forma de onda qué devuelve <code
+        class="inline">rdata</code> un ciclo después: ¿el valor viejo o el nuevo? Documentá el
+        resultado en un comentario — es información real sobre el comportamiento de este bloque
+        de memoria específico, no algo para asumir de memoria.</p>
+      </div>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>11.4 — Segundo puerto de lectura</h4>
+        <span class="level" data-level="2"><span></span><span></span><span></span></span></div>
+        <p>Extendé <code class="inline">banco_pesos</code> con una segunda dirección de lectura
+        independiente, leída en el mismo ciclo que la primera (dos salidas <code
+        class="inline">rdata_a</code>/<code class="inline">rdata_b</code>). Esta es, en miniatura,
+        la misma idea detrás de que cada uno de varios carriles MAC en paralelo (Tema 6) tenga su
+        <strong>propio</strong> banco de memoria: paralelismo real de memoria, no solo de
+        cómputo.</p>
+      </div>
+
+      <div class="pagenav">
+        <a href="#spi"><span class="lbl">Anterior</span>← 10 · SPI</a>
+        <a class="next" href="#bram-comm"><span class="lbl">Siguiente</span>12 · BRAM + protocolo →</a>
+      </div>
+      <div class="donerow"><input type="checkbox" data-done="bram" id="done-bram"><label for="done-bram">Marcar "BRAM hardcodeada" como completado</label></div>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="page" id="page-bram-comm">
+      <span class="crumb">Memoria: BRAM · Tema 12 de 15</span>
+      <h1>BRAM + protocolo: cargar y verificar</h1>
+      <p class="dek">Lo mismo, tres veces: escribir en la BRAM desde afuera por UART, por I2C y
+      por SPI, y leerlo de vuelta por el mismo canal para confirmar que se guardó bien.</p>
+
+      <div class="callout req"><span class="lbl">Prerrequisito</span><p>Temas 8, 9, 10 (los tres
+      protocolos) y 11 (BRAM). No hay contenido nuevo de protocolo acá — es integración pura.</p></div>
+
+      <p>El patrón es idéntico en los tres casos: un comando de <strong>escritura</strong>
+      (dirección + dato) mueve el dato a la BRAM; un comando de <strong>lectura</strong>
+      (dirección) trae de vuelta lo que hay guardado ahí, por el mismo canal que lo mandó. Verificar
+      "se guardó bien" significa, ni más ni menos, que lo que vuelve coincide exactamente con lo
+      que se mandó.</p>
+
+      <div class="diagram">
+<pre class="mermaid">
+flowchart LR
+    W["ESCRIBIR: dirección + dato"] --> BRAM[("BRAM")]
+    BRAM --> R["LEER: mismo canal, misma dirección"]
+    R --> CMP{"¿coincide con<br/>lo que mandé?"}
+</pre>
+      </div>
+
+      <h3 class="sec">Variante UART</h3>
+      <p>Trama de 3 bytes: <code class="inline">[CMD][ADDR][DATO]</code> para escribir (CMD=1);
+      <code class="inline">[CMD][ADDR]</code> para pedir lectura (CMD=2), respondida con un byte
+      extra por <code class="inline">uart_tx</code>.</p>
+      <pre class="code">localparam CMD_WR=1, CMD_RD=2;
+localparam ESPERA=0, ARG1=1, ARG2=2, EJECUTAR=3, RESPONDER=4;
+reg [2:0] estado = ESPERA;
+reg [7:0] cmd_reg, addr_reg;
+
+always @(posedge clk) begin
+    enviar &lt;= 0;       <span class="c">// pulso hacia uart_tx, por defecto abajo</span>
+    case (estado)
+        ESPERA:    if (listo) begin cmd_reg &lt;= dato; estado &lt;= ARG1; end
+        ARG1:      if (listo) begin addr_reg &lt;= dato; estado &lt;= (cmd_reg==CMD_WR) ? ARG2 : EJECUTAR; end
+        ARG2:      if (listo) begin wr_en &lt;= 1; wdata &lt;= dato; addr &lt;= addr_reg; estado &lt;= ESPERA; end
+        EJECUTAR:  begin addr &lt;= addr_reg; estado &lt;= RESPONDER; end   <span class="c">// esperar 1 ciclo: latencia BRAM</span>
+        RESPONDER: begin dato_tx &lt;= rdata; enviar &lt;= 1; estado &lt;= ESPERA; end
+    endcase
+    if (estado != ARG2) wr_en &lt;= 0;
+end</pre>
+
+      <h3 class="sec">Variante I2C</h3>
+      <p>Reusá el Ejercicio 9.2 (múltiples registros direccionables) casi tal cual: el primer
+      byte después de la dirección ya es el índice de BRAM, el segundo es el dato a escribir. Para
+      la lectura, sumá el Ejercicio 9.3 (el target manda datos): tras un START repetido con
+      <code class="inline">rw_bit=1</code>, el target devuelve <code
+      class="inline">mem[addr_guardada]</code>.</p>
+
+      <h3 class="sec">Variante SPI</h3>
+      <p>La más directa de las tres, gracias al full-duplex: con <code class="inline">FRAME_BITS
+      = 24</code> (<code class="inline">[CMD][ADDR][DATO]</code>), un mismo frame de escritura ya
+      deja <code class="inline">tx_data</code> listo con el contenido <em>anterior</em> de esa
+      dirección (útil para confirmar un cambio real); un frame de lectura (CMD distinto, DATO
+      ignorado) simplemente expone <code class="inline">rdata</code> en <code
+      class="inline">tx_data</code>, recordando siempre que SPI entrega esa respuesta recién en
+      el <strong>siguiente</strong> frame.</p>
+
+      <h3 class="sec">Ejercicios</h3>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>12.1 — Escribir y verificar por UART</h4>
+        <span class="level" data-level="2"><span></span><span></span><span></span></span></div>
+        <p>Completá la FSM de la sección UART de arriba. Desde una terminal serie (o un script),
+        escribí 5 pares (dirección, dato) distintos, y para cada uno mandá inmediatamente después
+        el comando de lectura de esa misma dirección — confirmá a ojo (o por script) que cada
+        respuesta coincide con lo que mandaste.</p>
+      </div>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>12.2 — Escribir y verificar por I2C</h4>
+        <span class="level" data-level="2"><span></span><span></span><span></span></span></div>
+        <p>Mismo ejercicio que 12.1, pero por I2C. Si todavía no resolviste el Ejercicio 9.3
+        (lectura I2C), es un buen momento para volver — acá se vuelve imprescindible, no
+        opcional.</p>
+      </div>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>12.3 — Escribir y verificar por SPI</h4>
+        <span class="level" data-level="1"><span></span><span></span><span></span></span></div>
+        <p>Mismo ejercicio, por SPI. Deberías notar que es el más simple de armar de los tres —
+        anotá por qué (pista: full-duplex + reloj compartido elimina toda la lógica de
+        temporización de bits que sí hizo falta en UART e I2C).</p>
+      </div>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>12.4 — Barrido completo con detección de error</h4>
+        <span class="level" data-level="3"><span></span><span></span><span></span></span></div>
+        <p>Elegí uno de los tres canales. Escribí un patrón conocido (por ejemplo, <code
+        class="inline">mem[i] = i XOR 0x5A</code>) en las 16 direcciones de una BRAM chica, releé
+        las 16, y encendé un LED de "error" si <strong>alguna</strong> no coincide. Esto es, en
+        miniatura exacta, el mismo verificador de escritura que el proyecto real usa sobre la
+        SDRAM en el Tema 14 — con la diferencia de que ahí hace falta, además, reintentar.</p>
+      </div>
+
+      <div class="pagenav">
+        <a href="#bram"><span class="lbl">Anterior</span>← 11 · BRAM hardcodeada</a>
+        <a class="next" href="#sdram"><span class="lbl">Siguiente</span>13 · SDRAM y sus modos de lectura →</a>
+      </div>
+      <div class="donerow"><input type="checkbox" data-done="bram-comm" id="done-bram-comm"><label for="done-bram-comm">Marcar "BRAM + protocolo" como completado</label></div>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="page" id="page-sdram">
+      <span class="crumb">Memoria: SDRAM · Tema 13 de 15</span>
+      <h1>SDRAM y sus modos de lectura</h1>
+      <p class="dek">Cuando el dato no entra en BRAM: memoria dinámica de verdad, con refresco,
+      comandos de bajo nivel, y la escalera real de optimización que recorrió este proyecto.</p>
+
+      <div class="callout req"><span class="lbl">Prerrequisito</span><p>Tema 11 (BRAM) y Tema 5
+      (clock/timing). La SDRAM no es "un array más grande" — es un chip de memoria dinámica real,
+      con un protocolo de comandos y temporizaciones en nanosegundos.</p></div>
+
+      <p>La Tang Nano 20K trae 8&nbsp;MB de SDRAM <strong>embebida</strong> (dentro del mismo
+      encapsulado, distinta de la flash externa de 64MB, que es no volátil y mucho más lenta).
+      Cada celda de SDRAM es un capacitor que se descarga solo: hay que <strong>refrescarla</strong>
+      periódicamente (leer y reescribir cada fila) o los datos se pierden. El acceso no es "leer
+      una dirección": hay que <strong>activar una fila</strong>, después leer/escribir una
+      columna dentro de esa fila, y eventualmente <strong>precargar</strong> antes de activar
+      otra fila.</p>
+
+      <h3 class="sec">Los comandos reales (<code class="inline">sdram.v</code> de este proyecto)</h3>
+      <pre class="code"><span class="c">// codificados en {RAS#, CAS#, WE#} -- tal cual el controlador real</span>
+localparam CMD_SetModeReg = 3'b000;
+localparam CMD_AutoRefresh= 3'b001;
+localparam CMD_PreCharge  = 3'b010;
+localparam CMD_BankActivate=3'b011;
+localparam CMD_Write      = 3'b100;
+localparam CMD_Read       = 3'b101;
+localparam CMD_NOP        = 3'b111;
+
+<span class="c">// registro de modo: ráfaga de longitud 2, modo secuencial, latencia CAS=2</span>
+localparam [2:0] BURST_LEN = 3'b001;
+localparam       BURST_MODE = 1'b0;
+localparam [10:0] MODE_REG = {4'b0, CAS[2:0], BURST_MODE, BURST_LEN};</pre>
+
+      <p>Y los estados reales del controlador (una FSM, igual que el Tema 7 — solo que con más
+      estados y temporizaciones exactas):</p>
+      <pre class="code">localparam INIT=0, CONFIG=1, IDLE=2, READ=3, WRITE=4, REFRESH=5, RDBURST2=6;
+<span class="c">// parámetros de timing reales, en ciclos de reloj a 54MHz:</span>
+<span class="c">// CAS=2, T_WR=2, T_MRD=2, T_RP=1 (15ns), T_RCD=1 (15ns), T_RC=4 (60ns)</span></pre>
+
+      <h3 class="sec">Modo 1 — un acceso por vez (el punto de partida estable)</h3>
+      <p>Activar la fila, esperar <code class="inline">T_RCD</code>, mandar READ o WRITE, esperar
+      la latencia CAS, capturar/entregar un único dato, precargar. Simple, con margen de tiempo
+      de sobra entre un acceso y el siguiente — y por eso mismo, lento: cada palabra paga el costo
+      completo de activar/precargar.</p>
+
+      <h3 class="sec">Modo 2 — ráfaga encadenada (dos comandos READ seguidos)</h3>
+      <p>Con la fila ya activa, un segundo <code class="inline">CMD_Read</code> inmediatamente
+      después del primero evita repetir la activación. Mejora real medida en este proyecto:
+      <strong>8,91&nbsp;ms → 7,23&nbsp;ms</strong> en la misma inferencia (2,67× contra el ESP32
+      en software, contra 1,68× del modo 1).</p>
+
+      <h3 class="sec">Modo 3 — ráfaga nativa (un solo comando, el chip encadena solo)</h3>
+      <pre class="code"><span class="c">// extracto real de sdram.v -- RDBURST2: BURST_LEN=2 en el registro de modo</span>
+<span class="c">// hace que UN SOLO comando READ entregue 2 palabras seguidas, solas</span>
+{RDBURST2, T_RCD}: begin
+    {SDRAM_nRAS, SDRAM_nCAS, SDRAM_nWE} &lt;= CMD_Read;
+end
+{RDBURST2, T_RCD+CAS+4'd1}: begin
+    <span class="c">// capturar palabra 0</span>
+end
+{RDBURST2, T_RCD+CAS+4'd3}: begin
+    <span class="c">// capturar palabra 1 -- nota el margen extra (+3, no +2):</span>
+    <span class="c">// encontrado empíricamente necesario, ver el problema real más abajo</span>
+end</pre>
+
+      <div class="callout warn">
+        <span class="lbl">La trampa real: BURST_LEN es un ajuste GLOBAL</span>
+        <p>Cambiar <code class="inline">BURST_LEN</code> a 2 en el registro de modo no afecta
+        solo a las lecturas en ráfaga: afecta a <strong>cualquier</strong> READ o WRITE, incluidos
+        los de una sola palabra. Adaptar el modo 3 exigió, además del comando nuevo: enmascarar
+        el segundo beat de cada WRITE simple (<code class="inline">SDRAM_DQM &lt;= 4'b1111</code>
+        en el ciclo extra) y descartar la segunda palabra que el chip manda de más en cada READ
+        simple. Un parámetro que "solo" parece afectar a un modo, en la práctica afecta a todos
+        los caminos que usan el mismo registro de configuración — vale la pena revisar todos,
+        no solo el que se pensaba tocar.</p>
+      </div>
+
+      <h3 class="sec">El problema real de la ráfaga nativa: desfasaje físico entre mitades del bus</h3>
+      <p>Con el modo 3 recién armado: RTL correcto, simulación limpia, timing estático cerrado
+      con margen — y aun así, corrupción real en la placa. La causa, encontrada en la
+      documentación oficial de Gowin: la SDRAM embebida de 32 bits de este chip son, por dentro,
+      <strong>dos memorias de 16 bits</strong> combinadas, con un desfasaje real de ~1 a 1,25
+      <strong>nanosegundos</strong> entre cuándo cada mitad entrega su dato — invisible en accesos
+      aislados, crítico con las lecturas pegadas de una ráfaga.</p>
+
+      <p>Ese tipo de desfasaje <strong>sub-ciclo</strong> no se arregla con un registro de ciclo
+      completo (herramienta para otro orden de magnitud de problema). La primitiva correcta es
+      <code class="inline">IODELAY</code>: retardo de entrada programable por pin, en pasos de
+      ~25 picosegundos:</p>
+
+      <pre class="code"><span class="c">// extracto real de sdram.v</span>
+parameter [6:0] DQ_LO_DELAY_TAPS = 7'd50;   <span class="c">// mitad baja del bus (bits 15:0)</span>
+parameter [6:0] DQ_HI_DELAY_TAPS = 7'd50;   <span class="c">// mitad alta del bus (bits 31:16)</span>
+
+IODELAY #(.C_STATIC_DLY(DQ_LO_DELAY_TAPS)) u_iodelay_lo ( <span class="c">/* ... */</span> );
+IODELAY #(.C_STATIC_DLY(DQ_HI_DELAY_TAPS)) u_iodelay    ( <span class="c">/* ... */</span> );</pre>
+
+      <p>Los 50 taps de cada mitad no se calcularon en el papel: se barrieron empíricamente en
+      placa real, tratando ambas mitades como variables que <strong>interactúan</strong> entre sí
+      (un barrido ingenuo de a una por vez queda atrapado en óptimos locales). Resultado final:
+      <strong>6,14&nbsp;ms, 3,15×</strong> contra el ESP32 en software, con una tasa de error
+      residual (~1%) que coincide exactamente con la ya conocida y ya mitigada tasa ligada al
+      refresco — es decir, sin ningún error nuevo introducido por la ráfaga en sí.</p>
+
+      <h3 class="sec">Resumen de los tres modos</h3>
+      <div class="tbl-wrap"><table>
+        <tr><th>Modo</th><th>Cómo</th><th>Tiempo (MNIST)</th><th>vs. ESP32 sw</th></tr>
+        <tr><td>1 · Un acceso por vez</td><td>activar+leer+precargar, cada palabra</td><td>8,91&nbsp;ms</td><td>1,68×</td></tr>
+        <tr><td>2 · Ráfaga encadenada</td><td>2 comandos READ seguidos, misma fila activa</td><td>7,23&nbsp;ms</td><td>2,67×</td></tr>
+        <tr><td>3 · Ráfaga nativa + IODELAY</td><td>1 comando, BURST_LEN=2, retardo de entrada por mitad de bus</td><td>6,14&nbsp;ms</td><td><strong>3,15×</strong></td></tr>
+      </table></div>
+
+      <h3 class="sec">Ejercicios</h3>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>13.1 — Simular el protocolo antes de tocar la placa</h4>
+        <span class="level" data-level="2"><span></span><span></span><span></span></span></div>
+        <p>Escribí un testbench con un <strong>modelo de comportamiento</strong> mínimo de SDRAM
+        (un array grande + lógica que reacciona a <code class="inline">{RAS,CAS,WE}</code>) y
+        confirmá en la forma de onda la secuencia completa del Modo 1: activar fila → esperar
+        T_RCD → READ → esperar CAS → dato válido → precargar.</p>
+      </div>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>13.2 — Contador de refrescos</h4>
+        <span class="level" data-level="2"><span></span><span></span><span></span></span></div>
+        <p>Sobre el mismo modelo de comportamiento, agregá un temporizador que dispare
+        <code class="inline">CMD_AutoRefresh</code> periódicamente (según <code
+        class="inline">T_RC</code>) incluso si no hay accesos pendientes — y verificá en
+        simulación que un acceso pedido justo durante un refresco espera a que termine antes de
+        ejecutarse.</p>
+      </div>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>13.3 — Medir el modo 1 en la placa real</h4>
+        <span class="level" data-level="3"><span></span><span></span><span></span></span></div>
+        <p>Con el controlador SDRAM de <code class="inline">fpga_project/src/04_sdram_pesos/sdram.v</code>
+        (código real del repositorio, no de esta guía), armá un contador de ciclos que mida
+        cuánto tarda una secuencia de 100 lecturas de una palabra cada una. Anotá el número:
+        vas a compararlo en el próximo ejercicio.</p>
+      </div>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>13.4 — Verificar la mejora real de la ráfaga encadenada</h4>
+        <span class="level" data-level="3"><span></span><span></span><span></span></span></div>
+        <p>Repetí la medición del 13.3 pero con 100 lecturas usando el Modo 2 (dos READ
+        seguidos, misma fila activa cuando la dirección lo permite). Confirmá con tu propia
+        medición, en tu propia placa, que el ahorro va en la dirección esperada — no hace falta
+        que el número coincida exacto con la tabla del proyecto real.</p>
+      </div>
+
+      <div class="pagenav">
+        <a href="#bram-comm"><span class="lbl">Anterior</span>← 12 · BRAM + protocolo</a>
+        <a class="next" href="#sdram-comm"><span class="lbl">Siguiente</span>14 · SDRAM + protocolo →</a>
+      </div>
+      <div class="donerow"><input type="checkbox" data-done="sdram" id="done-sdram"><label for="done-sdram">Marcar "SDRAM y sus modos de lectura" como completado</label></div>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="page" id="page-sdram-comm">
+      <span class="crumb">Memoria: SDRAM · Tema 14 de 15</span>
+      <h1>SDRAM + protocolo: cargar y verificar</h1>
+      <p class="dek">El mismo patrón del Tema 12, pero ahora contra memoria real de verdad — con
+      una diferencia importante: acá el hardware falla un poco, y hay que diseñar para eso.</p>
+
+      <div class="callout req"><span class="lbl">Prerrequisito</span><p>Tema 12 (BRAM +
+      protocolo) y Tema 13 (SDRAM). La FSM de comando es la misma idea; lo que cambia es qué hay
+      del otro lado.</p></div>
+
+      <p>Con BRAM, escribir y leer de vuelta alcanzaba para confirmar. Con SDRAM real, no: el
+      canal de escritura falla, en la práctica, una fracción muy pequeña de los bytes — y un solo
+      byte corrupto en el lugar equivocado puede arruinar todo lo que dependa de él después. La
+      diferencia de diseño clave de este tema es esta:</p>
+
+      <div class="callout warn">
+        <span class="lbl">No alcanza con "escribir y leer una vez"</span>
+        <p>Hay que <strong>verificar y reintentar</strong>: escribir, leer de vuelta, comparar, y
+        si no coincide, escribir de nuevo — hasta que coincida. Para las lecturas más críticas
+        (las que ocurren muchas veces seguidas, como recorrer una tabla completa), conviene
+        además <strong>leer varias veces y quedarse con la mayoría</strong> en vez de confiar en
+        una sola lectura.</p>
+      </div>
+
+      <h3 class="sec">Patrón recomendado: escribir con verificación</h3>
+      <pre class="code">localparam W_ESCRIBIR=0, W_LEER=1, W_COMPARAR=2, W_LISTO=3;
+reg [1:0] w_estado = W_ESCRIBIR;
+reg [7:0] intentos;
+
+always @(posedge clk) begin
+    case (w_estado)
+        W_ESCRIBIR: begin
+            sdram_wr_en &lt;= 1; sdram_wdata &lt;= dato_objetivo;
+            w_estado &lt;= W_LEER;
+        end
+        W_LEER: if (!sdram_busy) begin
+            sdram_rd_en &lt;= 1;
+            w_estado &lt;= W_COMPARAR;
+        end
+        W_COMPARAR: if (!sdram_busy) begin
+            if (sdram_rdata == dato_objetivo) w_estado &lt;= W_LISTO;
+            else if (intentos &lt; 8'd10) begin   <span class="c">// límite de reintentos: nunca colgarse para siempre</span>
+                intentos &lt;= intentos + 1;
+                w_estado &lt;= W_ESCRIBIR;
+            end else w_estado &lt;= W_LISTO;      <span class="c">// agotó reintentos: marcar error y seguir</span>
+        end
+    endcase
+end</pre>
+
+      <h3 class="sec">Patrón recomendado: lectura crítica por votación de mayoría</h3>
+      <pre class="code"><span class="c">// leer 3 veces, quedarse con lo que dicen al menos 2 -- el mismo mecanismo</span>
+<span class="c">// que protege el motor de streaming de pesos del proyecto real</span>
+wire [7:0] mayoria = (l0 &amp; l1) | (l1 &amp; l2) | (l0 &amp; l2);   <span class="c">// bit a bit, mayoría de 3</span></pre>
+
+      <h3 class="sec">Las tres variantes: mismo comando, distinto canal</h3>
+      <p>Reusá exactamente las FSMs del Tema 12 (UART/I2C/SPI), cambiando únicamente el
+      destino de <code class="inline">wr_en</code>/<code class="inline">addr</code>/<code
+      class="inline">wdata</code> de la BRAM al controlador SDRAM (que ahora responde con
+      <code class="inline">sdram_busy</code> y una latencia de varios ciclos, no 1 — otra
+      diferencia real a tener en cuenta en la FSM que orquesta todo).</p>
+
+      <h3 class="sec">Ejercicios</h3>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>14.1 — Escribir con verificación, por SPI</h4>
+        <span class="level" data-level="2"><span></span><span></span><span></span></span></div>
+        <p>Completá el patrón "escribir con verificación" de arriba, disparado por un comando
+        SPI, y agregá una salida de 1 bit <code class="inline">error_definitivo</code> que se
+        prenda si se agotaron los reintentos sin coincidir.</p>
+      </div>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>14.2 — Medir la tasa de error real</h4>
+        <span class="level" data-level="3"><span></span><span></span><span></span></span></div>
+        <p>Escribí y verificá 10.000 bytes seguidos (direcciones consecutivas, dato =
+        dirección&nbsp;XOR&nbsp;0xA5), contando cuántos necesitaron al menos un reintento.
+        Compará el orden de magnitud contra la tasa real documentada del proyecto (~0,004% de los
+        bytes) — no hace falta que coincida exacto, pero debería ser del mismo orden.</p>
+      </div>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>14.3 — Repetir el ejercicio 12.4, ahora con SDRAM</h4>
+        <span class="level" data-level="3"><span></span><span></span><span></span></span></div>
+        <p>El mismo barrido de escritura+verificación de patrón conocido del Tema 12, pero contra
+        SDRAM y con el mecanismo de reintentos activo. Contá cuántos bytes necesitaron reintento
+        antes de coincidir, y confirmá que, al final del barrido, el 100% coincide.</p>
+      </div>
+
+      <div class="exercise">
+        <div class="exercise-head"><h4>14.4 — UART/I2C/SPI, mismo patrón, ¿misma robustez?</h4>
+        <span class="level" data-level="3"><span></span><span></span><span></span></span></div>
+        <p>Repetí 14.2 con los otros dos canales. La tasa de error de la SDRAM en sí no debería
+        cambiar según el canal usado para comandarla — si tus números difieren mucho entre
+        canales, el sospechoso más probable no es la SDRAM sino la implementación del protocolo
+        (exactamente la lección del Bloque de multiplicadores: cuando el instrumento de medición
+        y el resultado se contradicen, dudar primero del instrumento).</p>
+      </div>
+
+      <div class="pagenav">
+        <a href="#sdram"><span class="lbl">Anterior</span>← 13 · SDRAM y sus modos de lectura</a>
+        <a class="next" href="#npu"><span class="lbl">Siguiente</span>15 · Diseñar una NPU por SPI →</a>
+      </div>
+      <div class="donerow"><input type="checkbox" data-done="sdram-comm" id="done-sdram-comm"><label for="done-sdram-comm">Marcar "SDRAM + protocolo" como completado</label></div>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="page" id="page-npu">
+      <span class="crumb">Proyecto final · Tema 15 de 15</span>
+      <h1>Diseñar una NPU manejada por SPI</h1>
+      <p class="dek">Asumiendo que ya dominás cada pieza por separado: así es como este
+      repositorio las combinó, en cuatro etapas reales, para llegar a un acelerador de redes
+      neuronales completo.</p>
+
+      <div class="callout req"><span class="lbl">Prerrequisito</span><p>Todo lo anterior. Esta
+      página no enseña ninguna técnica nueva de Verilog — es la integración de las 14 anteriores
+      en un sistema real, con la historia completa de qué se intentó, qué falló, y por qué.</p></div>
+
+      <div class="diagram">
+<pre class="mermaid">
+flowchart TD
+    E1["Etapa 1 · MAC único<br/>1 multiplicar-acumular por SPI (Temas 4, 10)"] --> E2
+    E2["Etapa 2 · MLP secuencial<br/>1 carril reutilizado, red completa (Tema 7)"] --> E3
+    E3["Etapa 3 · MLP paralelo<br/>8 carriles simultáneos, pesos en BRAM (Temas 6, 11)"] --> E4
+    E4["Etapa 4 · Streaming por SDRAM<br/>pesos en SDRAM, modelos grandes (Temas 13, 14)"]
+</pre>
+      </div>
+
+      <h3 class="sec">Etapa 1 — MAC único: probar el esqueleto de comunicación</h3>
+      <p>El objetivo no era la red neuronal: era confirmar que el ESP32 manda dos números por SPI
+      (Tema 10), la FPGA los multiplica con un DSP duro (Tema 4) y devuelve el resultado, sin
+      errores de framing. Acá nació <code class="inline">spi_slave.v</code> (el módulo exacto del
+      Tema 10) y el hábito que se repite en todo el proyecto: <strong>aislar una sospecha a la vez
+      en su propio top-level chico</strong> cuando algo falla en placa y no en simulación.</p>
+
+      <h3 class="sec">Etapa 2 — MLP secuencial: funciona, pero pierde contra el ESP32</h3>
+      <p>Red completa (130→128→64→32→5), reutilizando <strong>un solo</strong> carril MAC ciclo a
+      ciclo (la FSM del Tema 7, aplicada a orquestar una secuencia de multiplicaciones). Funcionó
+      — y resultó más lenta que el ESP32 en software. Con un solo multiplicador, el FPGA no tiene
+      ninguna ventaja estructural. La lección: <strong>un FPGA gana cuando el diseño aprovecha
+      paralelismo real</strong>, no por ser "hardware".</p>
+
+      <h3 class="sec">Etapa 3 — Paralelizar: 8 carriles y un bug que no estaba en el RTL</h3>
+      <p>Instanciar el módulo MAC (Tema 4/6) ocho veces, cada uno con su propio banco de BRAM
+      (Tema 11), procesando "olas" de 8 neuronas a la vez. Objetivo cumplido
+      (~1,16-1,17ms contra ~1,18-1,21ms del ESP32) — pero llegar ahí exigió aislar un bug que
+      parecía lógico y resultó ser <strong>cableado físico de SPI</strong>, encontrado con un
+      top-level de depuración que sacaba la memoria por pines GPIO directos, sin pasar por SPI ni
+      FSM.</p>
+
+      <h3 class="sec">Etapa 4 — SDRAM: el protocolo real, de punta a punta</h3>
+      <p>Un modelo útil (MNIST, ~110.000 pesos) ya no entra en BRAM. El protocolo SPI real de
+      esta etapa —siguiendo exactamente el patrón "comando de 1 byte + argumentos" del Tema 10—
+      es:</p>
+
+      <div class="tbl-wrap"><table>
+        <tr><th>Comando</th><th>Código</th><th>Qué hace</th></tr>
+        <tr><td>NOP</td><td class="mono">0x00</td><td>sondear estado</td></tr>
+        <tr><td>SDRAM_SET_ADDR</td><td class="mono">0x01</td><td>fijar el puntero de escritura</td></tr>
+        <tr><td>SDRAM_WR</td><td class="mono">0x02</td><td>escribir un byte, el puntero avanza solo</td></tr>
+        <tr><td>SET_NUM_LAYERS</td><td class="mono">0x04</td><td>cuántas capas tiene la red</td></tr>
+        <tr><td>SET_LAYER_SHAPE</td><td class="mono">0x05</td><td>entradas/salidas/base de bias de una capa</td></tr>
+        <tr><td>BIAS_WR</td><td class="mono">0x07</td><td>cargar un bias</td></tr>
+        <tr><td>SET_QPARAM</td><td class="mono">0x08</td><td>parámetros de cuantización por capa</td></tr>
+        <tr><td>START</td><td class="mono">0x09</td><td>disparar la inferencia</td></tr>
+        <tr><td>DBG_RD</td><td class="mono">0x0A</td><td>leer un valor interno (activaciones, salida, bias)</td></tr>
+      </table></div>
+
+      <p>Cuatro problemas nuevos aparecieron al mover los pesos a SDRAM streaming (Temas 13-14),
+      todos resueltos con las mismas técnicas de esta guía, aplicadas al caso real:</p>
+      <ul class="checklist">
+        <li><strong>Traducir el modelo de TFLite</strong>: pesos cuantizados tal cual, bias
+        "plegado" precalculado (<code class="inline">bias_efectivo = bias − zp_entrada × Σ
+        pesos</code>), multiplicador entero de punto fijo (<code class="inline">MULT_INT =
+        round(escala × 2²⁰)</code>) — cuantización per-tensor obligatoria, porque el hardware
+        tiene un solo multiplicador de reescalado por capa.</li>
+        <li><strong>Orden de memoria pensado para el streaming</strong>: <code
+        class="inline">dirección = base + paso×8 + carril</code>, para que una única palabra de
+        32 bits alimente a los 8 carriles a la vez (Tema 6, generalizado).</li>
+        <li><strong>El hardware falla un poco, siempre</strong>: verificar+reintentar en
+        escritura y votación de mayoría en lecturas críticas — exactamente el Tema 14, aplicado
+        a nivel de proyecto completo.</li>
+        <li><strong>Acelerar el streaming</strong>: la escalera completa de los tres modos de
+        lectura del Tema 13, con el desfasaje físico entre mitades del bus y <code
+        class="inline">IODELAY</code> como resolución final.</li>
+      </ul>
+
+      <h3 class="sec">Mejores prácticas — el resumen de las cuatro etapas</h3>
+      <ul class="checklist">
+        <li><strong>Medí antes de paralelizar.</strong> La Etapa 2 demostró que sin paralelismo
+        real, el FPGA no le gana a una CPU.</li>
+        <li><strong>Aislá una sospecha a la vez</strong> en su propio top-level chico cuando algo
+        falla en placa y no en simulación.</li>
+        <li><strong>"0 violaciones" en el timing no es garantía</strong> — ni de jitter de PLL no
+        modelado (Tema 5), ni de desfasajes físicos sub-ciclo entre pines (Tema 13).</li>
+        <li><strong>Diseñá asumiendo que el hardware real falla un poco</strong> (Tema 14), en vez
+        de perseguir un "cero errores" que puede no ser alcanzable.</li>
+        <li><strong>Ajustá la magnitud de la herramienta al tamaño del problema</strong>: un
+        registro de ciclo completo corrige desfasajes de un ciclo; <code
+        class="inline">IODELAY</code> corrige desfasajes sub-ciclo. La herramienta equivocada
+        puede mover el síntoma a un lugar más confuso.</li>
+        <li><strong>Separá capas que no necesitan saber nada la una de la otra</strong> (Tema 6):
+        comunicación, cómputo y orquestación como módulos independientes y simulables por
+        separado.</li>
+      </ul>
+
+      <h3 class="sec">Desafío final</h3>
+      <p>Con todo lo anterior ya construido, encadenalo en tu propio diseño, en este orden — es
+      el mismo orden, por las mismas razones, que las cuatro etapas de arriba:</p>
+      <ol class="steps">
+        <li>Un esclavo SPI propio (Tema 10) que reciba 2 números de 8 bits y devuelva su producto
+        usando el DSP duro (Tema 4).</li>
+        <li>Una FSM de comandos (Tema 7) que cargue varios pares en BRAM (Tema 11) y dispare el
+        cómputo de todos con un solo comando.</li>
+        <li>Paralelizalo instanciando varias unidades MAC (Tema 6), cada una con su propio banco
+        de memoria — medí contra hacerlo secuencial, en la misma placa, con los mismos datos.</li>
+        <li>Si el dataset no entra en BRAM: pasalo a SDRAM (Temas 13-14) y recorré, con tus
+        propios números, la misma lista de problemas de la Etapa 4 — ya sabés, de antemano, qué
+        buscar en cada uno.</li>
+      </ol>
+      <p>Los archivos reales que le dieron forma a cada etapa están, con su historia completa,
+      en <code class="inline">fpga_project/src/</code> de este repositorio — cada carpeta trae
+      su propio <code class="inline">README.md</code>.</p>
+
+      <div class="pagenav">
+        <a href="#sdram-comm"><span class="lbl">Anterior</span>← 14 · SDRAM + protocolo</a>
+        <a class="next" href="#inicio"><span class="lbl">Volver</span>Al mapa del curso →</a>
+      </div>
+      <div class="donerow"><input type="checkbox" data-done="npu" id="done-npu"><label for="done-npu">Marcar "Diseñar una NPU por SPI" como completado</label></div>
+    </section>
+
+  </div></main>
+</div>
+
+<script>
+(function(){
+  var ROUTES = ["compuertas","primer-modulo","sumadores","multiplicadores","clock","modular",
+    "fsm","uart","i2c","spi","bram","bram-comm","sdram","sdram-comm","npu"];
+  var STORE_KEY = "curso-fpga-progreso";
+
+  function getDone(){
+    try { return JSON.parse(localStorage.getItem(STORE_KEY) || "[]"); } catch(e){ return []; }
+  }
+  function setDone(list){
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(list)); } catch(e){}
+  }
+  function refreshProgress(){
+    var done = getDone();
+    ROUTES.forEach(function(r){
+      var link = document.querySelector('nav.toc a[data-route="'+r+'"]');
+      var box  = document.getElementById('done-'+r);
+      var isDone = done.indexOf(r) !== -1;
+      if (link) link.classList.toggle('done', isDone);
+      if (box) box.checked = isDone;
+    });
+    var pct = done.length + " / " + ROUTES.length + " temas completados";
+    document.getElementById('progresslbl').textContent = pct;
+    document.getElementById('progressfill').style.width = (done.length/ROUTES.length*100) + "%";
+  }
+  document.addEventListener('change', function(e){
+    if (e.target && e.target.matches('input[data-done]')){
+      var r = e.target.getAttribute('data-done');
+      var done = getDone();
+      var idx = done.indexOf(r);
+      if (e.target.checked && idx === -1) done.push(r);
+      if (!e.target.checked && idx !== -1) done.splice(idx,1);
+      setDone(done);
+      refreshProgress();
+    }
+  });
+
+  var pages = document.querySelectorAll('.page');
+  var links = document.querySelectorAll('nav.toc a');
+  function route(){
+    var hash = (location.hash || '#inicio').slice(1);
+    var target = document.getElementById('page-'+hash) ? hash : 'inicio';
+    pages.forEach(function(p){ p.classList.toggle('active', p.id === 'page-'+target); });
+    links.forEach(function(a){ a.classList.toggle('current', a.getAttribute('data-route') === target); });
+    document.getElementById('content').scrollTop = 0;
+    window.scrollTo(0,0);
+  }
+  window.addEventListener('hashchange', route);
+  route();
+  refreshProgress();
+})();
+</script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+  var isDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+  mermaid.initialize({ startOnLoad: true, theme: isDark ? "dark" : "default" });
+</script>
+</html>
