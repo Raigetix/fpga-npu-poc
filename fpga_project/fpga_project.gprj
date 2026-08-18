@@ -39,12 +39,17 @@
         <File path="src/04_sdram_pesos/mac_lane_stream.v" type="file.verilog" enable="1"/>
         <File path="src/04_sdram_pesos/mlp_engine_par_stream.v" type="file.verilog" enable="1"/>
         <File path="src/04_sdram_pesos/top_sdram_p3.v" type="file.verilog" enable="1"/>
+        <File path="src/04_sdram_pesos/pll_sdram_static.v" type="file.verilog" enable="1"/>
+        <File path="src/04_sdram_pesos/sdram_test_harness.v" type="file.verilog" enable="1"/>
+        <File path="src/04_sdram_pesos/top_sdram_freqtest.v" type="file.verilog" enable="1"/>
+        <File path="src/04_sdram_pesos/top_freqtest_54.v" type="file.verilog" enable="1"/>
         <File path="src/00_comun/top.cst" type="file.cst" enable="0"/>
         <File path="src/03_mlp_paralelo/debug_weight_par_direct.cst" type="file.cst" enable="0"/>
         <File path="src/04_sdram_pesos/sdram_pesos.cst" type="file.cst" enable="1"/>
         <File path="src/00_comun/top.sdc" type="file.sdc" enable="0"/>
         <File path="src/03_mlp_paralelo/debug_weight_par_direct.sdc" type="file.sdc" enable="0"/>
         <File path="src/03_mlp_paralelo/situaciones.sdc" type="file.sdc" enable="0"/>
-        <File path="src/04_sdram_pesos/sdram_pesos.sdc" type="file.sdc" enable="1"/>
+        <File path="src/04_sdram_pesos/sdram_pesos.sdc" type="file.sdc" enable="0"/>
+        <File path="src/04_sdram_pesos/sdram_freqtest.sdc" type="file.sdc" enable="1"/>
     </FileList>
 </Project>

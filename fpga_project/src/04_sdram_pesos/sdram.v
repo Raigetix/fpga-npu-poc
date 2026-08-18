@@ -205,22 +205,35 @@ always @(posedge clk) begin
         // sigue abierta para la palabra 2). Palabra 2: lee columna+1, CON
         // auto-precharge -- el chip precarga solo, sin comando ni espera
         // aparte, igual que ya hace un READ normal de una sola palabra.
+        // OJO -- version anterior emitia los dos READ separados por 1 solo
+        // ciclo (antes de que la palabra 1 siquiera hubiera llegado) y dio
+        // ~45% de bytes mal en hardware real, demasiado alto y esparcido
+        // para ser el problema de refresco ya conocido -- sospecha de tCCD
+        // (columna a columna) insuficiente. Ahora: capturar la palabra 1
+        // COMPLETA antes de emitir el comando de la palabra 2 (nunca hay
+        // dos comandos READ pendientes de resolverse al mismo tiempo).
         {RDBURST2, T_RCD}: begin
             {SDRAM_nRAS, SDRAM_nCAS, SDRAM_nWE} <= CMD_Read;
             SDRAM_A[10]  <= 1'b0;
             SDRAM_A[9:0] <= {2'b0, addr_buf[COL_WIDTH-1+2:2]};
             SDRAM_DQM    <= 4'b0;
         end
-        {RDBURST2, T_RCD+4'd1}: begin
+        // OJO -- igual que en READ normal, el dato no queda valido en el bus
+        // hasta T_RCD+CAS+1 (un ciclo despues de lo que seria el CAS latency
+        // "de libro"), no en T_RCD+CAS. La primera version de este bloque
+        // capturaba en T_RCD+CAS (y la palabra 2 con el mismo desfasaje
+        // relativo a su propio comando), un ciclo demasiado temprano, y eso
+        // -- no tCCD -- fue la causa real del ~93% de bytes mal en hardware.
+        {RDBURST2, T_RCD+CAS+4'd1}: begin
+            dout32_a_buf <= dq_in;
+        end
+        {RDBURST2, T_RCD+CAS+4'd2}: begin
             {SDRAM_nRAS, SDRAM_nCAS, SDRAM_nWE} <= CMD_Read;
             SDRAM_A[10]  <= 1'b1;
             SDRAM_A[9:0] <= {2'b0, addr_buf[COL_WIDTH-1+2:2]} + 10'd1;
             SDRAM_DQM    <= 4'b0;
         end
-        {RDBURST2, T_RCD+CAS+4'd1}: begin
-            dout32_a_buf <= dq_in;
-        end
-        {RDBURST2, T_RCD+CAS+4'd2}: begin
+        {RDBURST2, T_RCD+CAS+4'd2+CAS+4'd1}: begin
             dout32_b_buf <= dq_in;
             busy  <= 0;
             state <= IDLE;
