@@ -105,12 +105,16 @@ def augment(x, rng):
     return np.clip(out, -1.0, 1.0).astype(np.float32)
 
 
-def split_list(items, rng, frac_val=0.15, frac_test=0.15):
-    if len(items) < 6:
+def split_list(items, rng, n_val=1, n_test=1):
+    """Con un dataset chico (grabado a mano, ~20 por gesto) separar por
+    FRACCION deja muy poco para entrenar -- se separa una cantidad FIJA
+    y minima (1 val + 1 test por gesto) en vez de un porcentaje, para
+    que la gran mayoria quede disponible para entrenar. A cambio, la
+    precision final queda medida con muy pocos ejemplos por clase --
+    una estimacion floja, no una garantia."""
+    if len(items) < 2 * (n_val + n_test):
         return items, items, items    # muy pocos para partir
     idx = rng.permutation(len(items))
-    n_val = max(1, round(len(items) * frac_val))
-    n_test = max(1, round(len(items) * frac_test))
     te = [items[i] for i in idx[:n_test]]
     va = [items[i] for i in idx[n_test:n_test + n_val]]
     tr = [items[i] for i in idx[n_test + n_val:]]
