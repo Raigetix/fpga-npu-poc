@@ -232,6 +232,18 @@ void setup() {
   }
   Serial.println("PLL lock: OK\n");
 
+  Serial.println("=== Fase A (lectura repetida, un byte por vez) ===");
+  test_config(ADDR_MAX, SEED);
+  uint32_t cnt_a, total_a;
+  run_phase(1, 0, cnt_a, total_a);
+  Serial.println();
+
+  Serial.println("=== Fase B (escritura+lectura repetida, un byte por vez) ===");
+  test_config(ADDR_MAX, SEED);
+  uint32_t cnt_b, total_b;
+  run_phase(1, 1, cnt_b, total_b);
+  Serial.println();
+
   run_burst2_validation(label);
 }
 

@@ -49,7 +49,7 @@
         <File path="src/00_comun/top.sdc" type="file.sdc" enable="0"/>
         <File path="src/03_mlp_paralelo/debug_weight_par_direct.sdc" type="file.sdc" enable="0"/>
         <File path="src/03_mlp_paralelo/situaciones.sdc" type="file.sdc" enable="0"/>
-        <File path="src/04_sdram_pesos/sdram_pesos.sdc" type="file.sdc" enable="1"/>
-        <File path="src/04_sdram_pesos/sdram_freqtest.sdc" type="file.sdc" enable="0"/>
+        <File path="src/04_sdram_pesos/sdram_pesos.sdc" type="file.sdc" enable="0"/>
+        <File path="src/04_sdram_pesos/sdram_freqtest.sdc" type="file.sdc" enable="1"/>
     </FileList>
 </Project>

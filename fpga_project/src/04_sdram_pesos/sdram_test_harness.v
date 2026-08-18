@@ -162,7 +162,6 @@ module sdram_test_harness #(
     assign op_wdata       = lfsr[7:0];
 
     wire rd_complete  = (state == S_RD_WAIT)  && busy_seen && !sdram_busy;
-    wire rd_mismatch  = rd_complete && (sdram_dout != lfsr[7:0]);
     wire rdb_complete = (state == S_RDB_WAIT) && busy_seen && !sdram_busy;
     wire [22:0] group_size = 23'd8;
     wire at_range_end  = (addr_ctr == addr_max23 - 23'd1);
@@ -282,6 +281,92 @@ module sdram_test_harness #(
         end
     end
 
+    // ---- Canalizacion de la verificacion (1 ciclo de latencia extra) --
+    // EXPERIMENTO DE DEPURACION: al agregar restricciones reales de I/O
+    // para la SDRAM (ver sdram_freqtest.sdc) aparecieron ~9ns de violacion
+    // de setup en el camino pad->comparacion LFSR->contador de 32 bits,
+    // TODAS con destino en la logica de este arnes (nunca en el registro
+    // de captura de sdram.v en si) -- o sea, la comparacion+conteo en el
+    // MISMO ciclo que llega el dato del pad era demasiado larga a 54MHz
+    // con un retardo de entrada realista. Se separa en 2 pasos: capturar
+    // el dato crudo (mismo costo que la captura de sdram.v, ya probada) en
+    // el ciclo que completa la operacion, y hacer la comparacion/
+    // codificacion/incremento del contador un ciclo despues, con datos ya
+    // estables desde el arranque del ciclo.
+    reg        chk_valid    = 1'b0;
+    reg        chk_is_burst = 1'b0;
+    reg [7:0]  chk_dout;
+    reg [31:0] chk_dout32_a, chk_dout32_b;
+    reg [31:0] chk_lfsr;
+    reg [22:0] chk_addr;
+    reg [14:0] chk_rep;
+    reg        chk_phase_is_b;
+
+    always @(posedge clk) begin
+        chk_valid <= rd_complete || rdb_complete;
+        if (rd_complete || rdb_complete) begin
+            chk_is_burst   <= rdb_complete;
+            chk_dout       <= sdram_dout;
+            chk_dout32_a   <= sdram_dout32_a;
+            chk_dout32_b   <= sdram_dout32_b;
+            chk_lfsr       <= lfsr;
+            chk_addr       <= addr_ctr;
+            chk_rep        <= rep_ctr;
+            chk_phase_is_b <= (phase_r == 2'd1);
+        end
+    end
+
+    // Mismos 8 pasos del LFSR que exp_b0..b7/lfsr_g1..g8 mas arriba, pero
+    // arrancando de chk_lfsr (el valor YA REGISTRADO, no el en vivo) --
+    // asi esta comparacion no depende de nada que haya llegado este mismo
+    // ciclo desde el pad.
+    wire [31:0] chk_g1 = lfsr_step(chk_lfsr);
+    wire [31:0] chk_g2 = lfsr_step(chk_g1);
+    wire [31:0] chk_g3 = lfsr_step(chk_g2);
+    wire [31:0] chk_g4 = lfsr_step(chk_g3);
+    wire [31:0] chk_g5 = lfsr_step(chk_g4);
+    wire [31:0] chk_g6 = lfsr_step(chk_g5);
+    wire [31:0] chk_g7 = lfsr_step(chk_g6);
+
+    wire [7:0] chk_exp_b0 = chk_lfsr[7:0];
+    wire [7:0] chk_exp_b1 = chk_g1[7:0];
+    wire [7:0] chk_exp_b2 = chk_g2[7:0];
+    wire [7:0] chk_exp_b3 = chk_g3[7:0];
+    wire [7:0] chk_exp_b4 = chk_g4[7:0];
+    wire [7:0] chk_exp_b5 = chk_g5[7:0];
+    wire [7:0] chk_exp_b6 = chk_g6[7:0];
+    wire [7:0] chk_exp_b7 = chk_g7[7:0];
+
+    wire [7:0] chk_got_b0 = chk_dout32_a[7:0];
+    wire [7:0] chk_got_b1 = chk_dout32_a[15:8];
+    wire [7:0] chk_got_b2 = chk_dout32_a[23:16];
+    wire [7:0] chk_got_b3 = chk_dout32_a[31:24];
+    wire [7:0] chk_got_b4 = chk_dout32_b[7:0];
+    wire [7:0] chk_got_b5 = chk_dout32_b[15:8];
+    wire [7:0] chk_got_b6 = chk_dout32_b[23:16];
+    wire [7:0] chk_got_b7 = chk_dout32_b[31:24];
+
+    wire [7:0] chk_bad_mask = {(chk_got_b7!=chk_exp_b7), (chk_got_b6!=chk_exp_b6),
+                                (chk_got_b5!=chk_exp_b5), (chk_got_b4!=chk_exp_b4),
+                                (chk_got_b3!=chk_exp_b3), (chk_got_b2!=chk_exp_b2),
+                                (chk_got_b1!=chk_exp_b1), (chk_got_b0!=chk_exp_b0)};
+    wire [3:0] chk_bad_count = chk_bad_mask[0]+chk_bad_mask[1]+chk_bad_mask[2]+chk_bad_mask[3]+
+                                chk_bad_mask[4]+chk_bad_mask[5]+chk_bad_mask[6]+chk_bad_mask[7];
+    reg [2:0] chk_first_bad_idx;
+    reg [7:0] chk_first_bad_exp, chk_first_bad_got;
+    always @(*) begin
+        if (chk_bad_mask[0])      begin chk_first_bad_idx=3'd0; chk_first_bad_exp=chk_exp_b0; chk_first_bad_got=chk_got_b0; end
+        else if (chk_bad_mask[1]) begin chk_first_bad_idx=3'd1; chk_first_bad_exp=chk_exp_b1; chk_first_bad_got=chk_got_b1; end
+        else if (chk_bad_mask[2]) begin chk_first_bad_idx=3'd2; chk_first_bad_exp=chk_exp_b2; chk_first_bad_got=chk_got_b2; end
+        else if (chk_bad_mask[3]) begin chk_first_bad_idx=3'd3; chk_first_bad_exp=chk_exp_b3; chk_first_bad_got=chk_got_b3; end
+        else if (chk_bad_mask[4]) begin chk_first_bad_idx=3'd4; chk_first_bad_exp=chk_exp_b4; chk_first_bad_got=chk_got_b4; end
+        else if (chk_bad_mask[5]) begin chk_first_bad_idx=3'd5; chk_first_bad_exp=chk_exp_b5; chk_first_bad_got=chk_got_b5; end
+        else if (chk_bad_mask[6]) begin chk_first_bad_idx=3'd6; chk_first_bad_exp=chk_exp_b6; chk_first_bad_got=chk_got_b6; end
+        else                       begin chk_first_bad_idx=3'd7; chk_first_bad_exp=chk_exp_b7; chk_first_bad_got=chk_got_b7; end
+    end
+
+    wire chk_mismatch = chk_valid && !chk_is_burst && (chk_dout != chk_lfsr[7:0]);
+
     // ---- Contadores de resultados + log de fallas: unico bloque que los
     // escribe. Se reinician al arrancar una fase nueva (start_en), no se
     // acumulan entre corridas distintas. Fase C reusa counter_a/
@@ -300,21 +385,21 @@ module sdram_test_harness #(
                 counter_a_r     <= 32'd0;
                 reads_total_a_r <= 32'd0;
             end
-        end else if (rd_complete) begin
-            if (phase_r == 2'd0) reads_total_a_r <= reads_total_a_r + 32'd1;
+        end else if (chk_valid && !chk_is_burst) begin
+            if (!chk_phase_is_b) reads_total_a_r <= reads_total_a_r + 32'd1;
             else                  reads_total_b_r <= reads_total_b_r + 32'd1;
-            if (rd_mismatch) begin
-                if (phase_r == 2'd0) counter_a_r <= counter_a_r + 32'd1;
+            if (chk_mismatch) begin
+                if (!chk_phase_is_b) counter_a_r <= counter_a_r + 32'd1;
                 else                  counter_b_r <= counter_b_r + 32'd1;
-                fail_log_mem[fail_log_wptr] <= {9'd0, {1'b0, rep_ctr}, sdram_dout, lfsr[7:0], addr_ctr};
+                fail_log_mem[fail_log_wptr] <= {9'd0, {1'b0, chk_rep}, chk_dout, chk_lfsr[7:0], chk_addr};
                 fail_log_wptr <= fail_log_wptr + 8'd1;
             end
-        end else if (rdb_complete) begin
+        end else if (chk_valid && chk_is_burst) begin
             reads_total_a_r <= reads_total_a_r + {28'd0, 4'd8};  // 8 bytes por grupo
-            if (bad_count != 4'd0) begin
-                counter_a_r <= counter_a_r + {28'd0, bad_count};
-                fail_log_mem[fail_log_wptr] <= {9'd0, {1'b0, rep_ctr}, first_bad_got, first_bad_exp,
-                                                 addr_ctr + {20'd0, first_bad_idx}};
+            if (chk_bad_count != 4'd0) begin
+                counter_a_r <= counter_a_r + {28'd0, chk_bad_count};
+                fail_log_mem[fail_log_wptr] <= {9'd0, {1'b0, chk_rep}, chk_first_bad_got, chk_first_bad_exp,
+                                                 chk_addr + {20'd0, chk_first_bad_idx}};
                 fail_log_wptr <= fail_log_wptr + 8'd1;
             end
         end

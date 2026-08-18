@@ -154,11 +154,22 @@ module top_sdram_freqtest #(
     reg refresh_owed = 1'b0;   // hubo un refresco concedido, todavia no
                                 // "gastado" en la operacion de prueba siguiente
 
-    localparam [2:0] V_IDLE=3'd0, V_WAIT1=3'd1, V_ISSUE2=3'd2, V_WAIT2=3'd3,
-                      V_ISSUE3=3'd4, V_WAIT3=3'd5, V_DONE=3'd6;
-    reg [2:0]  v_state = V_IDLE;
+    // EXPERIMENTO DE DEPURACION -- con restricciones reales de I/O para la
+    // SDRAM (ver sdram_freqtest.sdc), aparecio ~6ns de violacion de setup
+    // en V_WAIT2/V_WAIT3: comparaban 'sdram_dout' (recien llegado del pad,
+    // con retardo de entrada real) contra v_val1/v_val2 EN EL MISMO ciclo
+    // que decidian el proximo estado -- mismo patron ya arreglado en
+    // sdram_test_harness.v. Se agregan V_CMP2/V_CMP3: capturar el dato
+    // crudo en V_WAIT2/V_WAIT3 (sin comparar todavia), comparar recien en
+    // el ciclo siguiente con datos ya estables desde el arranque del
+    // ciclo. Un ciclo mas de latencia en la verificacion (rara, solo tras
+    // un refresco), sin cambiar la logica de mayoria en si.
+    localparam [3:0] V_IDLE=4'd0, V_WAIT1=4'd1, V_ISSUE2=4'd2, V_WAIT2=4'd3,
+                      V_CMP2=4'd4, V_ISSUE3=4'd5, V_WAIT3=4'd6, V_CMP3=4'd7,
+                      V_DONE=4'd8;
+    reg [3:0]  v_state = V_IDLE;
     reg        v_busy_seen = 1'b0;
-    reg [7:0]  v_val1, v_val2, v_final;
+    reg [7:0]  v_val1, v_val2, v_val3, v_final;
     reg [22:0] v_addr;
     reg        v_active = 1'b0;   // hay una verificacion post-refresco en curso
 
@@ -221,12 +232,15 @@ module top_sdram_freqtest #(
                     if (v_busy_seen && !sdram_busy) begin
                         v_val2      <= sdram_dout;
                         v_busy_seen <= 1'b0;
-                        if (sdram_dout == v_val1) begin
-                            v_final <= v_val1;
-                            v_state <= V_DONE;
-                        end else begin
-                            v_state <= V_ISSUE3;
-                        end
+                        v_state     <= V_CMP2;
+                    end
+                end
+                V_CMP2: begin
+                    if (v_val2 == v_val1) begin
+                        v_final <= v_val1;
+                        v_state <= V_DONE;
+                    end else begin
+                        v_state <= V_ISSUE3;
                     end
                 end
                 V_ISSUE3: begin
@@ -237,12 +251,16 @@ module top_sdram_freqtest #(
                 V_WAIT3: begin
                     if (sdram_busy) v_busy_seen <= 1'b1;
                     if (v_busy_seen && !sdram_busy) begin
+                        v_val3      <= sdram_dout;
                         v_busy_seen <= 1'b0;
-                        if (sdram_dout == v_val1)      v_final <= v_val1;
-                        else if (sdram_dout == v_val2) v_final <= v_val2;
-                        else                            v_final <= sdram_dout;
-                        v_state <= V_DONE;
+                        v_state     <= V_CMP3;
                     end
+                end
+                V_CMP3: begin
+                    if (v_val3 == v_val1)      v_final <= v_val1;
+                    else if (v_val3 == v_val2) v_final <= v_val2;
+                    else                        v_final <= v_val3;
+                    v_state <= V_DONE;
                 end
                 V_DONE: begin
                     v_active <= 1'b0;
