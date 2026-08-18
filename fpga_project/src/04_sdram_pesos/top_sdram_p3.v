@@ -154,7 +154,12 @@ module top_sdram_p3 (
     // top_mlp_par.v usa para ignorar comandos de carga mientras busy=1.
     wire cmd_ok = frame_done_d1 && !mlp_busy;
 
-    localparam REFRESH_INTERVAL = 700;
+    // Techo real: la SDRAM necesita >=4096 refrescos cada 64ms (~15.6us
+    // maximo entre refrescos, ver sdram.v), que a 54MHz son ~844 ciclos.
+    // Subido de 700 a 800 (~5% de margen bajo ese techo), validado en
+    // docs/caracterizacion-frecuencia-sdram.md junto con la verificacion
+    // condicional de mas abajo.
+    localparam REFRESH_INTERVAL = 800;
     reg [9:0] refresh_ctr = 10'd0;
     reg       refresh_pending = 1'b0;
     always @(posedge clk_sys) begin
@@ -167,11 +172,37 @@ module top_sdram_p3 (
         if (want_refresh) refresh_pending <= 1'b0;
     end
 
+    // ================= Verificacion por doble/triple lectura, SOLO en
+    // la lectura de weight_stream que sigue justo despues de un refresco
+    // (ver docs/caracterizacion-frecuencia-sdram.md -- ahi cae ~97% de la
+    // corrupcion intermitente ya documentada). A DIFERENCIA de un primer
+    // intento (ver weight_stream.v, encabezado, y el commit revertido en
+    // feature/production-refresh-verify-fix), TODA la decision Y
+    // ejecucion de la verificacion vive ACA, en un unico lugar -- no se
+    // reparte una bandera entre el arbitro y weight_stream.v. Mientras
+    // dura la verificacion (v_active), el arbitro bloquea TODO lo demas,
+    // incluido un refresco nuevo -- asi la banderita nunca se puede
+    // "gastar" en el lugar equivocado, que era la grieta del intento
+    // anterior. weight_stream.v (y por lo tanto mlp_engine_par_stream.v)
+    // ni se enteran: reciben 'busy'/'dout32' ya verificados, sea que por
+    // debajo haya habido 1, 2 o 3 lecturas reales. =================
+    reg        refresh_owed = 1'b0;   // hubo un refresco concedido, todavia
+                                        // no "gastado" en la lectura siguiente
+    localparam [2:0] V_IDLE=3'd0, V_WAIT1=3'd1, V_ISSUE2=3'd2, V_WAIT2=3'd3,
+                      V_ISSUE3=3'd4, V_WAIT3=3'd5, V_DONE=3'd6;
+    reg [2:0]  v_state = V_IDLE;
+    reg        v_busy_seen = 1'b0;
+    reg [31:0] v_val1, v_val2, v_final;
+    reg [22:0] v_addr;
+    reg        v_active = 1'b0;       // hay una verificacion post-refresco en curso
+
     // ---- Arbitro: SPI directo (carga de pesos a SDRAM) > streaming de
-    // pesos (computo) > refresco. Mismo patron ya probado de Fase 1/2.
-    wire want_spi_op = !sdram_busy && (pending_wr || pending_rd);
-    wire want_ws_op  = !sdram_busy && !want_spi_op && ws_want_req;
-    wire want_refresh = !sdram_busy && !want_spi_op && !want_ws_op && refresh_pending;
+    // pesos (computo) > refresco. Mismo patron ya probado de Fase 1/2,
+    // con !v_active agregado a los 3 para que nada se cuele mientras dura
+    // una verificacion.
+    wire want_spi_op  = !sdram_busy && !v_active && (pending_wr || pending_rd);
+    wire want_ws_op   = !sdram_busy && !v_active && !want_spi_op && ws_want_req;
+    wire want_refresh = !sdram_busy && !v_active && !want_spi_op && !want_ws_op && refresh_pending;
 
     wire        ws_want_req;
     wire [22:0] ws_addr;
@@ -181,21 +212,84 @@ module top_sdram_p3 (
         sdram_rd_pulse       <= 1'b0;
         sdram_refresh_pulse <= 1'b0;
 
-        if (want_spi_op) begin
-            sdram_op_addr <= pending_addr;
-            if (pending_wr) begin
-                sdram_op_data  <= pending_data;
-                sdram_wr_pulse <= 1'b1;
-                pending_wr     <= 1'b0;
-            end else begin
+        if (v_state == V_IDLE) begin
+            if (want_spi_op) begin
+                sdram_op_addr <= pending_addr;
+                if (pending_wr) begin
+                    sdram_op_data  <= pending_data;
+                    sdram_wr_pulse <= 1'b1;
+                    pending_wr     <= 1'b0;
+                end else begin
+                    sdram_rd_pulse <= 1'b1;
+                    pending_rd     <= 1'b0;
+                end
+            end else if (want_ws_op) begin
+                sdram_op_addr  <= ws_addr;
                 sdram_rd_pulse <= 1'b1;
-                pending_rd     <= 1'b0;
+                if (refresh_owed) begin
+                    v_addr       <= ws_addr;
+                    v_busy_seen  <= 1'b0;
+                    v_active     <= 1'b1;
+                    v_state      <= V_WAIT1;
+                end
+                refresh_owed <= 1'b0;
+            end else if (want_refresh) begin
+                sdram_refresh_pulse <= 1'b1;
+                refresh_owed        <= 1'b1;
             end
-        end else if (want_ws_op) begin
-            sdram_op_addr  <= ws_addr;
-            sdram_rd_pulse <= 1'b1;
-        end else if (want_refresh) begin
-            sdram_refresh_pulse <= 1'b1;
+        end else begin
+            case (v_state)
+                V_WAIT1: begin
+                    if (sdram_busy) v_busy_seen <= 1'b1;
+                    if (v_busy_seen && !sdram_busy) begin
+                        v_val1      <= sdram_dout32;
+                        v_busy_seen <= 1'b0;
+                        v_state     <= V_ISSUE2;
+                    end
+                end
+                V_ISSUE2: begin
+                    sdram_op_addr  <= v_addr;
+                    sdram_rd_pulse <= 1'b1;
+                    v_state        <= V_WAIT2;
+                end
+                V_WAIT2: begin
+                    if (sdram_busy) v_busy_seen <= 1'b1;
+                    if (v_busy_seen && !sdram_busy) begin
+                        v_val2      <= sdram_dout32;
+                        v_busy_seen <= 1'b0;
+                        if (sdram_dout32 == v_val1) begin
+                            v_final <= v_val1;
+                            v_state <= V_DONE;
+                        end else begin
+                            v_state <= V_ISSUE3;
+                        end
+                    end
+                end
+                V_ISSUE3: begin
+                    sdram_op_addr  <= v_addr;
+                    sdram_rd_pulse <= 1'b1;
+                    v_state        <= V_WAIT3;
+                end
+                V_WAIT3: begin
+                    if (sdram_busy) v_busy_seen <= 1'b1;
+                    if (v_busy_seen && !sdram_busy) begin
+                        v_busy_seen <= 1'b0;
+                        // mayoria de 3: si la tercera no coincide con
+                        // ninguna de las dos primeras (rarisimo), se toma
+                        // la tercera igual -- mejor un valor fresco que
+                        // uno de dos que ya se sabe que no coinciden.
+                        if (sdram_dout32 == v_val1) v_final <= v_val1;
+                        else if (sdram_dout32 == v_val2) v_final <= v_val2;
+                        else v_final <= sdram_dout32;
+                        v_state <= V_DONE;
+                    end
+                end
+                V_DONE: begin
+                    v_active <= 1'b0;
+                    v_state  <= V_IDLE;
+                end
+                default: v_state <= V_IDLE;
+            endcase
         end
 
         if (cmd_ok) begin
@@ -219,6 +313,15 @@ module top_sdram_p3 (
     end
 
     reg [22:0] weight_base_reg = 23'd0;
+
+    // Lo que ve weight_stream.v (via mlp_engine_par_stream.v): 'busy' se
+    // mantiene en alto durante TODA la verificacion (no solo la primera
+    // lectura), y 'dout32' entrega el valor ya votado. Fuera de una
+    // verificacion (v_active=0, el 97% del tiempo) esto es identico a
+    // los cables crudos de sdram.v -- cero costo extra en el camino
+    // rapido.
+    wire        ws_sdram_busy   = sdram_busy || v_active;
+    wire [31:0] ws_sdram_dout32 = (v_state == V_DONE) ? v_final : sdram_dout32;
 
     sdram #(.FREQ(54_000_000), .T_RP(4'd2), .T_RCD(4'd2)) u_sdram (
         .clk       (clk_sys),
@@ -326,8 +429,8 @@ module top_sdram_p3 (
         .ws_want_req (ws_want_req),
         .ws_addr     (ws_addr),
         .ws_issue    (want_ws_op),
-        .sdram_busy  (sdram_busy),
-        .sdram_dout32(sdram_dout32),
+        .sdram_busy  (ws_sdram_busy),
+        .sdram_dout32(ws_sdram_dout32),
         .weight_base_addr(weight_base_reg),
 
         .load_num_layers_en   (load_numlayers_en),
