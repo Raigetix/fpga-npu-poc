@@ -55,9 +55,12 @@ module weight_stream (
     // necesariamente los cables crudos de sdram.v. ----
     output wire         ws_want_req,
     output wire [22:0]  ws_addr,
+    output wire         ws_is_burst2, // pide rd_burst2 (lo+hi de una) en vez de rd simple
     input  wire         ws_issue,     // == want_ws_op del arbitro, combinacional, este mismo ciclo
     input  wire         sdram_busy,
     input  wire [31:0]  sdram_dout32,
+    input  wire [31:0]  sdram_dout32_a, // palabra lo de rd_burst2 (ya verificada por el arbitro)
+    input  wire [31:0]  sdram_dout32_b, // palabra hi de rd_burst2 (ya verificada por el arbitro)
 
     // ---- Interfaz hacia el consumidor (motor de computo) ----
     output wire               data_valid,   // hay un grupo listo en la cabeza de la FIFO
@@ -65,8 +68,9 @@ module weight_stream (
     input  wire                pop           // consumir el grupo de la cabeza, avanzar a la FIFO
 );
 
-    localparam [1:0] WS_REQ1=2'd0, WS_WAIT1=2'd1, WS_NEXT_WORD=2'd2, WS_PUSH=2'd3;
-    reg [1:0]  ws_state = WS_REQ1;
+    localparam [2:0] WS_REQ1=3'd0, WS_WAIT1=3'd1, WS_NEXT_WORD=3'd2, WS_PUSH=3'd3,
+                      WS_WAIT_BURST=3'd4;
+    reg [2:0]  ws_state = WS_REQ1;
     reg        word_sel = 1'b0;      // 0=lo (carriles 0-3), 1=hi (carriles 4-7)
     reg [15:0] fetch_addr = 16'd0;   // paso local, se multiplica x8 para la direccion real
     reg [31:0] val_lo, val_hi;
@@ -75,6 +79,16 @@ module weight_stream (
     wire [22:0] group_base = base_addr + {fetch_addr, 3'b000};
     assign ws_addr = group_base + (word_sel ? 23'd4 : 23'd0);
     assign ws_want_req = (ws_state == WS_REQ1);
+
+    // rd_burst2 trae lo+hi (columna base y columna+1 de la MISMA fila) en
+    // una sola operacion -- ver sdram.v. Solo vale si lo NO cae en la
+    // ULTIMA columna de la fila (columna 255): ahi hi se saldria a la fila
+    // siguiente, que rd_burst2 no maneja (ver comentario de rd_burst2 en
+    // sdram.v). Para ese caso puntual (1 de cada 128 grupos, como mucho)
+    // se cae al camino viejo de dos lecturas simples, igual que antes.
+    wire [7:0] lo_column     = group_base[9:2];
+    wire       want_burst_now = (word_sel == 1'b0) && (lo_column != 8'hFF);
+    assign ws_is_burst2 = want_burst_now;
 
     // ---- FIFO de 4 grupos (8 bytes cada uno) ----
     localparam integer FIFO_DEPTH = 4;
@@ -127,7 +141,16 @@ module weight_stream (
         case (ws_state)
             WS_REQ1: if (ws_issue) begin
                 busy_seen <= 1'b0;
-                ws_state  <= WS_WAIT1;
+                ws_state  <= want_burst_now ? WS_WAIT_BURST : WS_WAIT1;
+            end
+            WS_WAIT_BURST: begin
+                if (sdram_busy) busy_seen <= 1'b1;
+                if (busy_seen && !sdram_busy) begin
+                    busy_seen <= 1'b0;
+                    val_lo   <= sdram_dout32_a;
+                    val_hi   <= sdram_dout32_b;
+                    ws_state <= WS_PUSH;
+                end
             end
             WS_WAIT1: begin
                 if (sdram_busy) busy_seen <= 1'b1;

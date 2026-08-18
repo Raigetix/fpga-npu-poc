@@ -141,7 +141,8 @@ module top_sdram_p3 (
     reg [22:0] sdram_target;
     reg [22:0] sdram_op_addr;
     reg [7:0]  sdram_op_data;
-    reg        sdram_rd_pulse, sdram_wr_pulse, sdram_refresh_pulse;
+    reg        sdram_rd_pulse, sdram_wr_pulse, sdram_refresh_pulse, sdram_rd_burst2_pulse;
+    wire [31:0] sdram_dout32_a, sdram_dout32_b;
 
     reg        pending_wr, pending_rd;
     reg [22:0] pending_addr;
@@ -192,8 +193,12 @@ module top_sdram_p3 (
                       V_ISSUE3=3'd4, V_WAIT3=3'd5, V_DONE=3'd6;
     reg [2:0]  v_state = V_IDLE;
     reg        v_busy_seen = 1'b0;
-    reg [31:0] v_val1, v_val2, v_final;
+    // 64 bits para poder verificar tanto una lectura simple (32 bits, la
+    // mitad alta siempre en 0) como un rd_burst2 (lo+hi, 64 bits) con el
+    // mismo camino de comparacion/mayoria -- ver v_cur_sample mas abajo.
+    reg [63:0] v_val1, v_val2, v_final;
     reg [22:0] v_addr;
+    reg        v_is_burst2;           // que tipo de operacion esta verificando
     reg        v_active = 1'b0;       // hay una verificacion post-refresco en curso
 
     // ---- Arbitro: SPI directo (carga de pesos a SDRAM) > streaming de
@@ -206,11 +211,20 @@ module top_sdram_p3 (
 
     wire        ws_want_req;
     wire [22:0] ws_addr;
+    wire        ws_is_burst2;
+
+    // Muestra actual, con el mismo ancho sea cual sea el tipo de operacion
+    // que se esta verificando -- lo unico que cambia entre una lectura
+    // simple y un rd_burst2 es de donde sale el dato, la maquina V_* de
+    // abajo es identica para los dos casos.
+    wire [63:0] v_cur_sample = v_is_burst2 ? {sdram_dout32_b, sdram_dout32_a}
+                                            : {32'd0, sdram_dout32};
 
     always @(posedge clk_sys) begin
-        sdram_wr_pulse      <= 1'b0;
+        sdram_wr_pulse       <= 1'b0;
         sdram_rd_pulse       <= 1'b0;
-        sdram_refresh_pulse <= 1'b0;
+        sdram_rd_burst2_pulse<= 1'b0;
+        sdram_refresh_pulse  <= 1'b0;
 
         if (v_state == V_IDLE) begin
             if (want_spi_op) begin
@@ -224,10 +238,12 @@ module top_sdram_p3 (
                     pending_rd     <= 1'b0;
                 end
             end else if (want_ws_op) begin
-                sdram_op_addr  <= ws_addr;
-                sdram_rd_pulse <= 1'b1;
+                sdram_op_addr <= ws_addr;
+                if (ws_is_burst2) sdram_rd_burst2_pulse <= 1'b1;
+                else              sdram_rd_pulse         <= 1'b1;
                 if (refresh_owed) begin
                     v_addr       <= ws_addr;
+                    v_is_burst2  <= ws_is_burst2;
                     v_busy_seen  <= 1'b0;
                     v_active     <= 1'b1;
                     v_state      <= V_WAIT1;
@@ -242,22 +258,23 @@ module top_sdram_p3 (
                 V_WAIT1: begin
                     if (sdram_busy) v_busy_seen <= 1'b1;
                     if (v_busy_seen && !sdram_busy) begin
-                        v_val1      <= sdram_dout32;
+                        v_val1      <= v_cur_sample;
                         v_busy_seen <= 1'b0;
                         v_state     <= V_ISSUE2;
                     end
                 end
                 V_ISSUE2: begin
-                    sdram_op_addr  <= v_addr;
-                    sdram_rd_pulse <= 1'b1;
-                    v_state        <= V_WAIT2;
+                    sdram_op_addr <= v_addr;
+                    if (v_is_burst2) sdram_rd_burst2_pulse <= 1'b1;
+                    else              sdram_rd_pulse         <= 1'b1;
+                    v_state <= V_WAIT2;
                 end
                 V_WAIT2: begin
                     if (sdram_busy) v_busy_seen <= 1'b1;
                     if (v_busy_seen && !sdram_busy) begin
-                        v_val2      <= sdram_dout32;
+                        v_val2      <= v_cur_sample;
                         v_busy_seen <= 1'b0;
-                        if (sdram_dout32 == v_val1) begin
+                        if (v_cur_sample == v_val1) begin
                             v_final <= v_val1;
                             v_state <= V_DONE;
                         end else begin
@@ -266,9 +283,10 @@ module top_sdram_p3 (
                     end
                 end
                 V_ISSUE3: begin
-                    sdram_op_addr  <= v_addr;
-                    sdram_rd_pulse <= 1'b1;
-                    v_state        <= V_WAIT3;
+                    sdram_op_addr <= v_addr;
+                    if (v_is_burst2) sdram_rd_burst2_pulse <= 1'b1;
+                    else              sdram_rd_pulse         <= 1'b1;
+                    v_state <= V_WAIT3;
                 end
                 V_WAIT3: begin
                     if (sdram_busy) v_busy_seen <= 1'b1;
@@ -278,9 +296,9 @@ module top_sdram_p3 (
                         // ninguna de las dos primeras (rarisimo), se toma
                         // la tercera igual -- mejor un valor fresco que
                         // uno de dos que ya se sabe que no coinciden.
-                        if (sdram_dout32 == v_val1) v_final <= v_val1;
-                        else if (sdram_dout32 == v_val2) v_final <= v_val2;
-                        else v_final <= sdram_dout32;
+                        if (v_cur_sample == v_val1) v_final <= v_val1;
+                        else if (v_cur_sample == v_val2) v_final <= v_val2;
+                        else v_final <= v_cur_sample;
                         v_state <= V_DONE;
                     end
                 end
@@ -320,8 +338,10 @@ module top_sdram_p3 (
     // verificacion (v_active=0, el 97% del tiempo) esto es identico a
     // los cables crudos de sdram.v -- cero costo extra en el camino
     // rapido.
-    wire        ws_sdram_busy   = sdram_busy || v_active;
-    wire [31:0] ws_sdram_dout32 = (v_state == V_DONE) ? v_final : sdram_dout32;
+    wire        ws_sdram_busy     = sdram_busy || v_active;
+    wire [31:0] ws_sdram_dout32   = (v_state == V_DONE && !v_is_burst2) ? v_final[31:0]  : sdram_dout32;
+    wire [31:0] ws_sdram_dout32_a = (v_state == V_DONE &&  v_is_burst2) ? v_final[31:0]  : sdram_dout32_a;
+    wire [31:0] ws_sdram_dout32_b = (v_state == V_DONE &&  v_is_burst2) ? v_final[63:32] : sdram_dout32_b;
 
     sdram #(.FREQ(54_000_000), .T_RP(4'd2), .T_RCD(4'd2)) u_sdram (
         .clk       (clk_sys),
@@ -330,13 +350,13 @@ module top_sdram_p3 (
         .rd        (sdram_rd_pulse),
         .wr        (sdram_wr_pulse),
         .refresh   (sdram_refresh_pulse),
-        .rd_burst2 (1'b0),        // no usado todavia en produccion, ver docs/caracterizacion-frecuencia-sdram.md
+        .rd_burst2 (sdram_rd_burst2_pulse),
         .addr      (sdram_op_addr),
         .din       (sdram_op_data),
         .dout      (sdram_dout),
         .dout32    (sdram_dout32),
-        .dout32_a  (),
-        .dout32_b  (),
+        .dout32_a  (sdram_dout32_a),
+        .dout32_b  (sdram_dout32_b),
         .data_ready(),
         .busy      (sdram_busy),
 
@@ -429,11 +449,14 @@ module top_sdram_p3 (
         .clk (clk_sys),
         .rst (start_pulse),
 
-        .ws_want_req (ws_want_req),
-        .ws_addr     (ws_addr),
-        .ws_issue    (want_ws_op),
-        .sdram_busy  (ws_sdram_busy),
-        .sdram_dout32(ws_sdram_dout32),
+        .ws_want_req   (ws_want_req),
+        .ws_addr       (ws_addr),
+        .ws_is_burst2  (ws_is_burst2),
+        .ws_issue      (want_ws_op),
+        .sdram_busy    (ws_sdram_busy),
+        .sdram_dout32  (ws_sdram_dout32),
+        .sdram_dout32_a(ws_sdram_dout32_a),
+        .sdram_dout32_b(ws_sdram_dout32_b),
         .weight_base_addr(weight_base_reg),
 
         .load_num_layers_en   (load_numlayers_en),
