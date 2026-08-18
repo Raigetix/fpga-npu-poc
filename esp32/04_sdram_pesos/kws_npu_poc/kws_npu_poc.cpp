@@ -616,7 +616,7 @@ void setup() {
   Serial.println("\n=== PALABRAS CLAVE en la NPU (modelo leido desde flash) ===");
   Serial.printf("PSRAM: %lu bytes libres\n", (unsigned long)ESP.getFreePsram());
 
-  if (!LittleFS.begin(false)) {
+  if (!LittleFS.begin(false, "/littlefs", 10, "model")) {
     Serial.println("ERROR: no se pudo montar LittleFS.");
     Serial.println("       Subi los archivos con:  pio run -t uploadfs");
     return;
