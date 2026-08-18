@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>NPU -- Gestos (varita mágica)</title>
+<style>
+  body { font-family: -apple-system, Arial, sans-serif; background:#111; color:#eee; margin:0; padding:20px; text-align:center; }
+  h1 { font-size: 20px; }
+  button { font-size: 20px; padding: 18px 26px; border-radius: 12px; border:none; color:#fff; }
+  #enableBtn { background:#3091F1; }
+  #goBtn { background:#8e44ad; width:100%; margin-top:16px; }
+  #goBtn:disabled { opacity:.5; }
+  #big { font-size: 60px; font-weight:bold; margin: 14px 0; }
+  #result { font-size: 22px; margin-top: 14px; min-height: 30px; }
+  #detail { font-size: 13px; color:#999; margin-top:10px; text-align:left; font-family:monospace; white-space:pre-wrap; }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+  <h1>🪄 NPU -- Gestos con el celular</h1>
+  <div id="gate">
+    <p>Tocá para habilitar el sensor de movimiento.</p>
+    <button id="enableBtn">Habilitar sensor</button>
+  </div>
+
+  <div id="app" class="hidden">
+    <p>Apretá el botón, esperá la cuenta regresiva y hacé un gesto: círculo, rayo/zigzag, invocar (arriba-abajo) o desviar (izq-der).</p>
+    <button id="goBtn">🔮 Grabar gesto</button>
+    <div id="big"></div>
+    <div id="result"></div>
+    <div id="detail"></div>
+  </div>
+
+<script>
+const REC_MS = 1500;
+const COUNTDOWN = 3;
+let recording = false;
+let samples = [];
+let recStart = 0;
+let usingGravityFallback = null;
+
+function pickAccel(e) {
+  const a = e.acceleration;
+  if (a && (a.x !== null && a.x !== undefined)) { usingGravityFallback = false; return a; }
+  usingGravityFallback = true;
+  return e.accelerationIncludingGravity || {};
+}
+
+function onMotion(e) {
+  if (!recording) return;
+  const a = pickAccel(e);
+  const r = e.rotationRate || {};
+  samples.push({
+    t: Date.now() - recStart,
+    ax: a.x || 0, ay: a.y || 0, az: a.z || 0,
+    gx: r.alpha || 0, gy: r.beta || 0, gz: r.gamma || 0
+  });
+}
+
+document.getElementById('enableBtn').onclick = async () => {
+  try {
+    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+      const res = await DeviceMotionEvent.requestPermission();
+      if (res !== 'granted') { alert('Permiso denegado. Sin esto no se puede grabar.'); return; }
+    }
+    window.addEventListener('devicemotion', onMotion);
+    document.getElementById('gate').classList.add('hidden');
+    document.getElementById('app').classList.remove('hidden');
+  } catch (err) {
+    alert('Error habilitando el sensor: ' + err);
+  }
+};
+
+document.getElementById('goBtn').onclick = async () => {
+  const goBtn = document.getElementById('goBtn');
+  const big = document.getElementById('big');
+  const result = document.getElementById('result');
+  const detail = document.getElementById('detail');
+  goBtn.disabled = true;
+  result.textContent = '';
+  detail.textContent = '';
+
+  for (let i = COUNTDOWN; i >= 1; i--) {
+    big.textContent = i;
+    await sleep(500);
+  }
+  big.textContent = '🔴';
+  samples = [];
+  recStart = Date.now();
+  recording = true;
+  await sleep(REC_MS);
+  recording = false;
+  big.textContent = '⏳';
+
+  // CSV: t,ax,ay,az,gx,gy,gz por linea (el firmware no tiene libreria de JSON)
+  let csv = '';
+  for (const s of samples) csv += `${s.t},${s.ax},${s.ay},${s.az},${s.gx},${s.gy},${s.gz}\n`;
+
+  try {
+    const resp = await fetch('/predict', { method: 'POST', headers: {'Content-Type': 'text/plain'}, body: csv });
+    const data = await resp.json();
+    big.textContent = '✨';
+    if (data.error) {
+      result.textContent = 'Error: ' + data.error;
+    } else {
+      result.textContent = 'FPGA dice: ' + data.gesto + '  (' + data.ms.toFixed(2) + ' ms)';
+      detail.textContent =
+        `muestras grabadas: ${data.nMuestras}\n` +
+        `ESP32 (software): ${data.swGesto}  (${data.swMs.toFixed(2)} ms)\n` +
+        `puntajes [${data.gestos.join(', ')}]: [${data.scores.join(', ')}]`;
+    }
+  } catch (err) {
+    result.textContent = 'Error: ' + err;
+  }
+  goBtn.disabled = false;
+};
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+</script>
+</body>
+</html>

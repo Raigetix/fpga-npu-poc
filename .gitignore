@@ -6,11 +6,12 @@ __pycache__/
 tools/*.npz
 tools/*.log
 
-# ---- Grabaciones de voz personales -- no van al control de versiones.
-# Quedan en el disco tal cual, solo no se versionan (son datos, no codigo,
-# y son personales). Si las queres respaldar, hacelo aparte (zip, backup
-# externo, etc.), no por git. ----
+# ---- Grabaciones de voz/movimiento personales -- no van al control de
+# versiones. Quedan en el disco tal cual, solo no se versionan (son datos,
+# no codigo, y son personales). Si las queres respaldar, hacelo aparte
+# (zip, backup externo, etc.), no por git. ----
 tools/my_words/
+tools/gestures/gestos_data.jsonl
 
 # ---- Modelos entrenados exportados (regenerables con
 # tools/train_one_word_npu.py -- ver README) ----
