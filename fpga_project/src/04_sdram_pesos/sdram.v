@@ -75,7 +75,44 @@ module sdram
 reg dq_oen;         // 0 = salida activa
 reg [DATA_WIDTH-1:0] dq_out;
 assign SDRAM_DQ = dq_oen ? 32'bzzzz_zzzz_zzzz_zzzz_zzzz_zzzz_zzzz_zzzz : dq_out;
-wire [DATA_WIDTH-1:0] dq_in = SDRAM_DQ;
+
+// EXPERIMENTO -- las fallas con BURST_LEN=2 caian SOLO en los bytes 2-3
+// (mitad alta de los 32 bits), nunca en 0-1. La SDRAM embebida son en
+// realidad DOS memorias de 16 bits en el mismo encapsulado (confirmado en
+// el testbench oficial de Gowin, SDRC_EMB/GW2AR: nDRAM=2, DQ_BITS=16) --
+// si hay un desfasaje real de unos pocos ns entre esas dos mitades, un
+// retardo de un ciclo ENTERO (lo que se probo antes) apunta a la ventana
+// equivocada (la rafaga ya termino, el bus ya esta flotando). La
+// herramienta correcta para un desfasaje de sub-ciclo es IODELAY (retardo
+// programable por pin del IOB de Gowin, pasos de 0.025ns, 0-127) -- se
+// prueba agregandolo SOLO a la mitad alta, con la cantidad de pasos como
+// parametro para barrer empiricamente.
+parameter [6:0] DQ_HI_DELAY_TAPS = 7'd50;   // EXPERIMENTO -- barrer 0..127
+// EXPERIMENTO -- la falla que quedaba en rd_burst2 (byte0, casi cualquier
+// direccion, sin patron periodico -- no es la carrera de refresco ya
+// conocida) sugiere que el byte0 tambien tiene un desfasaje propio, mas
+// chico que el de bytes 2-3, que solo se nota con el timing mas ajustado
+// de la rafaga real (el chip se comporta distinto a mitad de rafaga que
+// terminando una lectura simple). Se agrega un segundo IODELAY, mas chico,
+// para la mitad baja.
+parameter [6:0] DQ_LO_DELAY_TAPS = 7'd50;   // EXPERIMENTO -- barrer 0..127
+wire [DATA_WIDTH-1:0] dq_in_raw = SDRAM_DQ;
+wire [DATA_WIDTH-1:0] dq_in;
+genvar gi;
+generate
+    for (gi = 0; gi < 16; gi = gi + 1) begin : gen_iodelay_lo
+        IODELAY #(.C_STATIC_DLY(DQ_LO_DELAY_TAPS)) u_iodelay_lo (
+            .DI(dq_in_raw[gi]), .DO(dq_in[gi]),
+            .SDTAP(1'b0), .SETN(1'b0), .VALUE(1'b0)
+        );
+    end
+    for (gi = 16; gi < 32; gi = gi + 1) begin : gen_iodelay_hi
+        IODELAY #(.C_STATIC_DLY(DQ_HI_DELAY_TAPS)) u_iodelay (
+            .DI(dq_in_raw[gi]), .DO(dq_in[gi]),
+            .SDTAP(1'b0), .SETN(1'b0), .VALUE(1'b0)
+        );
+    end
+endgenerate
 
 reg [1:0] off;          // desplazamiento de byte dentro de la palabra de 32 bits
 reg [7:0] dout_buf;
@@ -120,7 +157,7 @@ localparam CMD_Write=3'b100;
 localparam CMD_Read=3'b101;
 localparam CMD_NOP=3'b111;
 
-localparam [2:0] BURST_LEN = 3'b0;      // longitud de rafaga 1
+localparam [2:0] BURST_LEN = 3'b001;    // longitud de rafaga 2 real -- EXPERIMENTO
 localparam BURST_MODE = 1'b0;           // secuencial
 localparam [10:0] MODE_REG = {4'b0, CAS[2:0], BURST_MODE, BURST_LEN};
 
@@ -201,40 +238,28 @@ always @(posedge clk) begin
             state <= IDLE;
         end
 
-        // Palabra 1: lee la columna base, SIN auto-precharge (la fila
-        // sigue abierta para la palabra 2). Palabra 2: lee columna+1, CON
-        // auto-precharge -- el chip precarga solo, sin comando ni espera
-        // aparte, igual que ya hace un READ normal de una sola palabra.
-        // OJO -- version anterior emitia los dos READ separados por 1 solo
-        // ciclo (antes de que la palabra 1 siquiera hubiera llegado) y dio
-        // ~45% de bytes mal en hardware real, demasiado alto y esparcido
-        // para ser el problema de refresco ya conocido -- sospecha de tCCD
-        // (columna a columna) insuficiente. Ahora: capturar la palabra 1
-        // COMPLETA antes de emitir el comando de la palabra 2 (nunca hay
-        // dos comandos READ pendientes de resolverse al mismo tiempo).
+        // EXPERIMENTO -- rafaga NATIVA de verdad (BURST_LEN=2 real en el
+        // registro de modo): UN solo comando READ con auto-precharge, el
+        // chip streamea las dos palabras solo. Version anterior (chained,
+        // dos comandos separados) asumia BURST_LEN=1 -- con BURST_LEN=2
+        // real activo, CADA uno de esos dos comandos dispararia su PROPIA
+        // rafaga de 2, y el segundo comando interrumpiria a mitad de
+        // camino la rafaga del primero (nunca deja completar el auto-
+        // precharge) -- eso explicaba el ~59% de bytes mal en hardware.
         {RDBURST2, T_RCD}: begin
             {SDRAM_nRAS, SDRAM_nCAS, SDRAM_nWE} <= CMD_Read;
-            SDRAM_A[10]  <= 1'b0;
+            SDRAM_A[10]  <= 1'b1;
             SDRAM_A[9:0] <= {2'b0, addr_buf[COL_WIDTH-1+2:2]};
             SDRAM_DQM    <= 4'b0;
         end
-        // OJO -- igual que en READ normal, el dato no queda valido en el bus
-        // hasta T_RCD+CAS+1 (un ciclo despues de lo que seria el CAS latency
-        // "de libro"), no en T_RCD+CAS. La primera version de este bloque
-        // capturaba en T_RCD+CAS (y la palabra 2 con el mismo desfasaje
-        // relativo a su propio comando), un ciclo demasiado temprano, y eso
-        // -- no tCCD -- fue la causa real del ~93% de bytes mal en hardware.
         {RDBURST2, T_RCD+CAS+4'd1}: begin
-            dout32_a_buf <= dq_in;
+            dout32_a_buf <= dq_in;   // 1ra palabra de la rafaga (columna base)
         end
-        {RDBURST2, T_RCD+CAS+4'd2}: begin
-            {SDRAM_nRAS, SDRAM_nCAS, SDRAM_nWE} <= CMD_Read;
-            SDRAM_A[10]  <= 1'b1;
-            SDRAM_A[9:0] <= {2'b0, addr_buf[COL_WIDTH-1+2:2]} + 10'd1;
-            SDRAM_DQM    <= 4'b0;
-        end
-        {RDBURST2, T_RCD+CAS+4'd2+CAS+4'd1}: begin
-            dout32_b_buf <= dq_in;
+        // EXPERIMENTO: un ciclo mas de margen antes de capturar la 2da
+        // palabra -- coincide con el arranque del auto-precharge interno,
+        // puede necesitar mas asentamiento que la 1ra.
+        {RDBURST2, T_RCD+CAS+4'd3}: begin
+            dout32_b_buf <= dq_in;   // 2da palabra (columna+1), llega sola
             busy  <= 0;
             state <= IDLE;
         end
@@ -251,9 +276,10 @@ always @(posedge clk) begin
             dq_oen <= 1'b0;
         end
         {WRITE, T_RCD+4'd1}: begin
-            dq_oen <= 1'b1;
+            SDRAM_DQM <= 4'b1111;
+            dq_oen    <= 1'b1;
         end
-        {WRITE, T_RCD+T_WR+T_RP}: begin
+        {WRITE, T_RCD+4'd1+T_WR+T_RP}: begin
             busy <= 0;
             state <= IDLE;
         end

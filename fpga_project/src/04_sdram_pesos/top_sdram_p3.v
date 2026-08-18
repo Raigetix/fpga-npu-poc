@@ -189,14 +189,24 @@ module top_sdram_p3 (
     // debajo haya habido 1, 2 o 3 lecturas reales. =================
     reg        refresh_owed = 1'b0;   // hubo un refresco concedido, todavia
                                         // no "gastado" en la lectura siguiente
-    localparam [2:0] V_IDLE=3'd0, V_WAIT1=3'd1, V_ISSUE2=3'd2, V_WAIT2=3'd3,
-                      V_ISSUE3=3'd4, V_WAIT3=3'd5, V_DONE=3'd6;
-    reg [2:0]  v_state = V_IDLE;
+    // Con restricciones reales de I/O para la SDRAM (ver
+    // docs/caracterizacion-frecuencia-sdram.md), el analisis estatico
+    // mostro que comparar 'v_cur_sample' (recien llegado del pad) contra
+    // v_val1/v_val2 EN EL MISMO ciclo que se decide el proximo estado
+    // tenia poco margen a 54MHz -- mismo patron ya corregido en el arnes
+    // de aislamiento (sdram_test_harness.v/top_sdram_freqtest.v). Se
+    // agregan V_CMP2/V_CMP3: capturar el dato crudo en V_WAIT2/V_WAIT3
+    // (sin comparar todavia), comparar recien un ciclo despues con datos
+    // ya estables.
+    localparam [3:0] V_IDLE=4'd0, V_WAIT1=4'd1, V_ISSUE2=4'd2, V_WAIT2=4'd3,
+                      V_CMP2=4'd4, V_ISSUE3=4'd5, V_WAIT3=4'd6, V_CMP3=4'd7,
+                      V_DONE=4'd8;
+    reg [3:0]  v_state = V_IDLE;
     reg        v_busy_seen = 1'b0;
     // 64 bits para poder verificar tanto una lectura simple (32 bits, la
     // mitad alta siempre en 0) como un rd_burst2 (lo+hi, 64 bits) con el
     // mismo camino de comparacion/mayoria -- ver v_cur_sample mas abajo.
-    reg [63:0] v_val1, v_val2, v_final;
+    reg [63:0] v_val1, v_val2, v_val3, v_final;
     reg [22:0] v_addr;
     reg        v_is_burst2;           // que tipo de operacion esta verificando
     reg        v_active = 1'b0;       // hay una verificacion post-refresco en curso
@@ -274,12 +284,15 @@ module top_sdram_p3 (
                     if (v_busy_seen && !sdram_busy) begin
                         v_val2      <= v_cur_sample;
                         v_busy_seen <= 1'b0;
-                        if (v_cur_sample == v_val1) begin
-                            v_final <= v_val1;
-                            v_state <= V_DONE;
-                        end else begin
-                            v_state <= V_ISSUE3;
-                        end
+                        v_state     <= V_CMP2;
+                    end
+                end
+                V_CMP2: begin
+                    if (v_val2 == v_val1) begin
+                        v_final <= v_val1;
+                        v_state <= V_DONE;
+                    end else begin
+                        v_state <= V_ISSUE3;
                     end
                 end
                 V_ISSUE3: begin
@@ -291,16 +304,20 @@ module top_sdram_p3 (
                 V_WAIT3: begin
                     if (sdram_busy) v_busy_seen <= 1'b1;
                     if (v_busy_seen && !sdram_busy) begin
+                        v_val3      <= v_cur_sample;
                         v_busy_seen <= 1'b0;
-                        // mayoria de 3: si la tercera no coincide con
-                        // ninguna de las dos primeras (rarisimo), se toma
-                        // la tercera igual -- mejor un valor fresco que
-                        // uno de dos que ya se sabe que no coinciden.
-                        if (v_cur_sample == v_val1) v_final <= v_val1;
-                        else if (v_cur_sample == v_val2) v_final <= v_val2;
-                        else v_final <= v_cur_sample;
-                        v_state <= V_DONE;
+                        v_state     <= V_CMP3;
                     end
+                end
+                V_CMP3: begin
+                    // mayoria de 3: si la tercera no coincide con
+                    // ninguna de las dos primeras (rarisimo), se toma
+                    // la tercera igual -- mejor un valor fresco que
+                    // uno de dos que ya se sabe que no coinciden.
+                    if (v_val3 == v_val1)      v_final <= v_val1;
+                    else if (v_val3 == v_val2) v_final <= v_val2;
+                    else                        v_final <= v_val3;
+                    v_state <= V_DONE;
                 end
                 V_DONE: begin
                     v_active <= 1'b0;
